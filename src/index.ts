@@ -207,7 +207,9 @@ server.registerTool(
         return textResult(data);
       }
 
-      const isPausedField = cfg.hasIsPaused !== false ? "\n          isPaused" : "";
+      const v3Only = cfg.hasIsPaused !== false;
+      const isPausedField = v3Only ? "\n          isPaused" : "";
+      const lifetimeFields = v3Only ? "\n          lifetimeSuppliersInterestEarned\n          lifetimeFlashLoanPremium" : "";
       const query = `{
         reserves(where: { symbol: "${symbol.toUpperCase()}" }) {
           id
@@ -236,14 +238,12 @@ server.registerTool(
           price { priceInEth }
           aToken { id }
           vToken { id }
-          sToken { id }
-          lifetimeSuppliersInterestEarned
+          sToken { id }${lifetimeFields}
           lifetimeBorrows
           lifetimeRepayments
           lifetimeWithdrawals
           lifetimeLiquidated
           lifetimeFlashLoans
-          lifetimeFlashLoanPremium
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
@@ -282,6 +282,8 @@ server.registerTool(
     try {
       const cfg = CHAINS[chain];
       const addr = userAddress.toLowerCase();
+      const eModeField = cfg.hasIsPaused !== false
+        ? "\n          eModeCategoryId { id label ltv liquidationThreshold }" : "";
       const query = `{
         userReserves(where: { user: "${addr}" }, first: 100) {
           reserve {
@@ -311,8 +313,7 @@ server.registerTool(
         user(id: "${addr}") {
           id
           borrowedReservesCount
-          unclaimedRewards
-          eModeCategoryId { id label ltv liquidationThreshold }
+          unclaimedRewards${eModeField}
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
@@ -564,6 +565,26 @@ server.registerTool(
       const where =
         filters.length > 0 ? `, where: { ${filters.join(", ")} }` : "";
 
+      // Fantom uses Messari schema (deposits entity with different fields)
+      if (cfg.isMessari) {
+        const messariFilters: string[] = [];
+        if (userAddress) messariFilters.push(`account: "${userAddress.toLowerCase()}"`);
+        if (reserveSymbol) messariFilters.push(`asset_: { symbol: "${reserveSymbol.toUpperCase()}" }`);
+        const messariWhere = messariFilters.length > 0 ? `, where: { ${messariFilters.join(", ")} }` : "";
+        const query = `{
+          deposits(first: ${first}, orderBy: timestamp, orderDirection: desc${messariWhere}) {
+            id
+            timestamp
+            account { id }
+            asset { symbol name decimals }
+            amount
+            amountUSD
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
       // V2 uses "deposit" entity, V3 uses "supply"
       const entity = cfg.version === "v2" ? "deposits" : "supplies";
 
@@ -620,6 +641,29 @@ server.registerTool(
   async ({ chain, first, userAddress, liquidator }) => {
     try {
       const cfg = CHAINS[chain];
+
+      // Fantom uses Messari schema (liquidates entity)
+      if (cfg.isMessari) {
+        const messariFilters: string[] = [];
+        if (userAddress) messariFilters.push(`liquidatee_: { id: "${userAddress.toLowerCase()}" }`);
+        if (liquidator) messariFilters.push(`liquidator_: { id: "${liquidator.toLowerCase()}" }`);
+        const messariWhere = messariFilters.length > 0 ? `, where: { ${messariFilters.join(", ")} }` : "";
+        const query = `{
+          liquidates(first: ${first}, orderBy: timestamp, orderDirection: desc${messariWhere}) {
+            id
+            timestamp
+            liquidator { id }
+            liquidatee { id }
+            asset { symbol decimals }
+            amount
+            amountUSD
+            profitUSD
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
       const filters: string[] = [];
       if (userAddress) filters.push(`user: "${userAddress.toLowerCase()}"`);
       if (liquidator)
@@ -673,7 +717,25 @@ server.registerTool(
   async ({ chain, first }) => {
     try {
       const cfg = CHAINS[chain];
-      const v3Fields = cfg.version === "v3" ? "\n          lpFee\n          protocolFee" : "";
+
+      // Fantom uses Messari schema (flashloans lowercase entity)
+      if (cfg.isMessari) {
+        const query = `{
+          flashloans(first: ${first}, orderBy: timestamp, orderDirection: desc) {
+            id
+            timestamp
+            account { id }
+            asset { symbol name decimals }
+            amount
+            amountUSD
+            feeAmount
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
+      const v3Fields = cfg.hasIsPaused !== false ? "\n          lpFee\n          protocolFee" : "";
       const query = `{
         flashLoans(first: ${first}, orderBy: timestamp, orderDirection: desc) {
           id
@@ -785,10 +847,6 @@ server.registerTool(
       const cfg = CHAINS["governance"];
       const where = state !== undefined ? `, where: { state: ${state} }` : "";
       const query = `{
-        proposals_collection: proposalMetadata_collection(first: ${first}, orderBy: proposalId, orderDirection: desc) {
-          proposalId
-          title
-        }
         proposals(first: ${first}, orderBy: proposalId, orderDirection: desc${where}) {
           proposalId
           creator
@@ -797,6 +855,7 @@ server.registerTool(
           state
           votingDuration
           snapshotBlockHash
+          proposalMetadata { title }
           votes {
             forVotes
             againstVotes
@@ -822,31 +881,22 @@ server.registerTool(
   "get_proposal_votes",
   {
     description:
-      "Use this when the user asks about votes on a specific AAVE governance proposal — " +
-      "'Who voted on proposal #X?', 'Show me the voting breakdown for this proposal', " +
-      "'Which addresses voted against?'. " +
-      "Returns individual votes with: voter address, voting power, support (true=for/false=against), " +
-      "and timestamp.",
+      "Use this when the user asks about the vote totals on a specific AAVE governance proposal — " +
+      "'How did proposal #X vote?', 'Show me the for/against breakdown for proposal #185', " +
+      "'Did proposal #X pass?'. " +
+      "Returns aggregate vote totals: total forVotes and againstVotes for the proposal. " +
+      "Note: individual per-voter records are not indexed in this subgraph.",
     inputSchema: {
       proposalId: z
         .string()
         .describe("AAVE governance proposal ID (numeric string, e.g. '185')"),
-      first: z
-        .number()
-        .min(1)
-        .max(100)
-        .default(50)
-        .describe("Number of votes to return (default 50)"),
     },
   },
-  async ({ proposalId, first }) => {
+  async ({ proposalId }) => {
     try {
       const cfg = CHAINS["governance"];
       const query = `{
         proposalVotes_collection(
-          first: ${first},
-          orderBy: forVotes,
-          orderDirection: desc,
           where: { id: "${proposalId}" }
         ) {
           id
