@@ -281,6 +281,9 @@ server.registerTool(
   async ({ chain, userAddress }) => {
     try {
       const cfg = CHAINS[chain];
+      if (cfg.isMessari) {
+        return textResult({ error: "Fantom uses a Messari subgraph schema that does not index userReserves. Use query_aave_subgraph with the 'positions' entity to query user positions on Fantom." });
+      }
       const addr = userAddress.toLowerCase();
       const eModeField = cfg.hasIsPaused !== false
         ? "\n          eModeCategoryId { id label ltv liquidationThreshold }" : "";
@@ -357,6 +360,9 @@ server.registerTool(
   async ({ chain, userAddress, assetSymbol, priceChangePct }) => {
     try {
       const cfg = CHAINS[chain];
+      if (cfg.isMessari) {
+        return textResult({ error: "Fantom uses a Messari subgraph schema that does not index userReserves. Health factor simulation is not available for Fantom." });
+      }
       const addr = userAddress.toLowerCase();
       const query = `{
         userReserves(where: { user: "${addr}" }, first: 100) {
@@ -496,6 +502,27 @@ server.registerTool(
   async ({ chain, first, userAddress, reserveSymbol }) => {
     try {
       const cfg = CHAINS[chain];
+
+      // Fantom uses Messari schema (account/asset instead of user/reserve)
+      if (cfg.isMessari) {
+        const messariFilters: string[] = [];
+        if (userAddress) messariFilters.push(`account: "${userAddress.toLowerCase()}"`);
+        if (reserveSymbol) messariFilters.push(`asset_: { symbol: "${reserveSymbol.toUpperCase()}" }`);
+        const messariWhere = messariFilters.length > 0 ? `, where: { ${messariFilters.join(", ")} }` : "";
+        const query = `{
+          borrows(first: ${first}, orderBy: timestamp, orderDirection: desc${messariWhere}) {
+            id
+            timestamp
+            account { id }
+            asset { symbol name decimals }
+            amount
+            amountUSD
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
       const filters: string[] = [];
       if (userAddress) filters.push(`user: "${userAddress.toLowerCase()}"`);
       if (reserveSymbol)
@@ -693,7 +720,88 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// Tool 9 — get_aave_flash_loans
+// Tool 9 — get_aave_repays
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_aave_repays",
+  {
+    description:
+      "Use this when the user asks about AAVE debt repayment activity — " +
+      "'Show me recent repayments on Ethereum', 'Has address 0x... repaid any debt?', " +
+      "'What assets are being repaid most on Arbitrum?', 'Show USDC repay history'. " +
+      "Returns repay events with: repayer address, asset, raw amount, and timestamp. " +
+      "Divide amount by 10^decimals for human-readable value.",
+    inputSchema: {
+      chain: z.enum(LENDING_CHAIN_NAMES).describe("Chain identifier"),
+      first: z
+        .number()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Number of repay events to return (1–100, default 20)"),
+      userAddress: z
+        .string()
+        .optional()
+        .describe("Optional: filter by repayer address (0x...)"),
+      reserveSymbol: z
+        .string()
+        .optional()
+        .describe("Optional: filter by asset symbol (e.g. USDC, WETH, DAI)"),
+    },
+  },
+  async ({ chain, first, userAddress, reserveSymbol }) => {
+    try {
+      const cfg = CHAINS[chain];
+
+      // Fantom uses Messari schema (account/asset instead of user/reserve)
+      if (cfg.isMessari) {
+        const messariFilters: string[] = [];
+        if (userAddress) messariFilters.push(`account: "${userAddress.toLowerCase()}"`);
+        if (reserveSymbol) messariFilters.push(`asset_: { symbol: "${reserveSymbol.toUpperCase()}" }`);
+        const messariWhere = messariFilters.length > 0 ? `, where: { ${messariFilters.join(", ")} }` : "";
+        const query = `{
+          repays(first: ${first}, orderBy: timestamp, orderDirection: desc${messariWhere}) {
+            id
+            timestamp
+            account { id }
+            asset { symbol name decimals }
+            amount
+            amountUSD
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
+      const filters: string[] = [];
+      if (userAddress) filters.push(`user: "${userAddress.toLowerCase()}"`);
+      if (reserveSymbol)
+        filters.push(`reserve_: { symbol: "${reserveSymbol.toUpperCase()}" }`);
+      const where =
+        filters.length > 0 ? `, where: { ${filters.join(", ")} }` : "";
+
+      const useATokensField = cfg.hasIsPaused !== false ? "\n          useATokens" : "";
+      const query = `{
+        repays(first: ${first}, orderBy: timestamp, orderDirection: desc${where}) {
+          id
+          txHash
+          timestamp
+          user { id }
+          repayer
+          reserve { symbol name decimals }
+          amount${useATokensField}
+        }
+      }`;
+      const data = await queryChain(cfg.subgraphId, query);
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 10 — get_aave_flash_loans
 // ---------------------------------------------------------------------------
 server.registerTool(
   "get_aave_flash_loans",
@@ -773,8 +881,9 @@ server.registerTool(
       reserveId: z
         .string()
         .describe(
-          "Reserve ID — from get_aave_reserves 'id' field " +
-            "(concatenation of underlyingAsset address + pool address, lowercase)"
+          "Reserve ID — from get_aave_reserves 'id' field. " +
+            "For AAVE V2/V3: concatenation of underlyingAsset + pool address (lowercase). " +
+            "For Fantom (Messari): the market 'id' field (contract address) from get_aave_reserves."
         ),
       first: z
         .number()
@@ -787,6 +896,28 @@ server.registerTool(
   async ({ chain, reserveId, first }) => {
     try {
       const cfg = CHAINS[chain];
+
+      // Fantom uses Messari schema — use marketDailySnapshots instead
+      // reserveId for Fantom = market contract address (id field from get_aave_reserves)
+      if (cfg.isMessari) {
+        const query = `{
+          marketDailySnapshots(
+            first: ${first},
+            orderBy: timestamp,
+            orderDirection: desc,
+            where: { market_: { id: "${reserveId.toLowerCase()}" } }
+          ) {
+            timestamp
+            totalValueLockedUSD
+            totalBorrowBalanceUSD
+            totalDepositBalanceUSD
+            rates { side type rate }
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
       const query = `{
         reserveParamsHistoryItems(
           first: ${first},
