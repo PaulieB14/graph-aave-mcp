@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.PaulieB14/graph-aave-mcp",
-  "description": "MCP server for querying AAVE V2/V3 lending protocol and governance data via The Graph subgraphs — 7 chains (Ethereum, Base, Arbitrum, Polygon, Optimism, Avalanche, Fantom) across 11 subgraphs. Some chains have both V2 and V3 deployments. Includes AAVE Governance V3.",
+  "description": "AAVE V2/V3 lending & governance MCP — 7 chains via The Graph subgraphs",
   "repository": {
     "url": "https://github.com/PaulieB14/graph-aave-mcp",
     "source": "github"
