@@ -23,19 +23,19 @@ Exposes 14 tools and 5 guided prompts that any AI agent (Claude, Cursor, Copilot
 
 7 chains, 11 subgraphs — some chains have both V2 (legacy) and V3 deployments tracked separately.
 
-| Chain | Version | Subgraph ID | 30-Day Queries |
-|-------|---------|-------------|----------------|
-| Ethereum | V3 | `Cd2gEDVeqnjBn1hSeqFMtw8Q1IiyV9FYUZkLNRcLB7g` | 21,600,000 |
-| Base | V3 | `GQFbb95cE6d8mV989mL5figjqGaKCQB3xqYrr1bRyXqF` | 5,618,153 |
-| Arbitrum | V3 | `DLuE98kEb5pQNXAcKFQGQgfSQ57Xdou4jnVbAEqMfy3B` | 5,600,000 |
-| Polygon | V3 | `Co2URyXjnxaw8WqxKyVHdirq9Ahhmsvcts4dMedAq211` | 2,000,000 |
-| Optimism | V3 | `DSfLz8oQBUeU5atALgUFQKMTSYV9mZAVYp4noLSXAfvb` | 1,800,000 |
-| Ethereum | V3 (alt) | `JCNWRypm7FYwV8fx5HhzZPSFaMxgkPuw4TnR3GpiB1zk` | 1,300,000 |
-| Avalanche | V3 | `2h9woxy8RTjHu1HJsCEnmzpPHFArU33avmUh4f71JpVn` | 1,200,000 |
-| **Ethereum** | **Governance V3** | `A7QMszgomC9cnnfpAcqZVLr2DffvkGNfimD8iUSMiurK` | 486,000 |
-| Polygon | V2 | `H1Et77RZh3XEf27vkAmJyzgCME2RSFLtDS2f4PPW6CGp` | 215,830 |
-| Avalanche | V2 | `EZvK18pMhwlCjxwesRLTg81fP33WnR6BnZe5Cvma3H1C` | 133,000 |
-| Fantom | V3 | `6L1vPqyE3xvkzkWJh6wUKc1ABWYYps5HJahoxhnv2PJn` | 13,240 |
+| Chain | Version | Subgraph ID |
+|-------|---------|-------------|
+| Ethereum | V3 | `Cd2gEDVeqnjBn1hSeqFMtw8Q1IiyV9FYUZkLNRcLB7g` |
+| Ethereum | V2 | `8wR23o1zKS4gpLqLNU4kG3JHYvucqGyopL5utGxP2q1N` |
+| Base | V3 | `GQFbb95cE6d8mV989mL5figjqGaKCQB3xqYrr1bRyXqF` |
+| Arbitrum | V3 | `DLuE98kEb5pQNXAcKFQGQgfSQ57Xdou4jnVbAEqMfy3B` |
+| Polygon | V3 | `Co2URyXjnxaw8WqxKyVHdirq9Ahhmsvcts4dMedAq211` |
+| Polygon | V2 | `H1Et77RZh3XEf27vkAmJyzgCME2RSFLtDS2f4PPW6CGp` |
+| Optimism | V3 | `DSfLz8oQBUeU5atALgUFQKMTSYV9mZAVYp4noLSXAfvb` |
+| Avalanche | V3 | `2h9woxy8RTjHu1HJsCEnmzpPHFArU33avmUh4f71JpVn` |
+| Avalanche | V2 | `EZvK18pMhwlCjxwesRLTg81fP33WnR6BnZe5Cvma3H1C` |
+| **Ethereum** | **Governance V3** | `A7QMszgomC9cnnfpAcqZVLr2DffvkGNfimD8iUSMiurK` |
+| Fantom | V3 | `6L1vPqyE3xvkzkWJh6wUKc1ABWYYps5HJahoxhnv2PJn` |
 
 ## Prerequisites
 

@@ -90,16 +90,17 @@ export const CHAINS: Record<string, ChainConfig> = {
       "reserve / userReserve / borrow / supply / repay / liquidationCall / flashLoan",
     ],
   },
-  "ethereum-v3": {
-    name: "Aave V3 Ethereum (alt)",
+  "ethereum-v2": {
+    name: "AAVE Protocol V2 Ethereum",
     chain: "Ethereum",
-    version: "v3",
-    subgraphId: "JCNWRypm7FYwV8fx5HhzZPSFaMxgkPuw4TnR3GpiB1zk",
-    queries30d: 1_300_000,
+    version: "v2",
+    subgraphId: "8wR23o1zKS4gpLqLNU4kG3JHYvucqGyopL5utGxP2q1N",
+    queries30d: 701_200,
     description:
-      "Alternative Aave V3 Ethereum subgraph — 1.3M queries/30d. Same schema as 'ethereum'.",
+      "AAVE V2 on Ethereum mainnet — legacy V2 deployment. " +
+      "NOTE: uses 'deposit' entity instead of 'supply' for deposit events.",
     keyEntities: [
-      "reserve / userReserve / borrow / supply / repay / liquidationCall / flashLoan",
+      "reserve / userReserve / borrow / deposit (NOT supply) / repay / liquidationCall / flashLoan",
     ],
   },
   avalanche: {
