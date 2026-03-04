@@ -624,6 +624,7 @@ server.registerTool(
   async ({ chain, first }) => {
     try {
       const cfg = CHAINS[chain];
+      const v3Fields = cfg.version === "v3" ? "\n          lpFee\n          protocolFee" : "";
       const query = `{
         flashLoans(first: ${first}, orderBy: timestamp, orderDirection: desc) {
           id
@@ -631,9 +632,7 @@ server.registerTool(
           initiator { id }
           reserve { symbol name decimals }
           amount
-          totalFee
-          lpFee
-          protocolFee
+          totalFee${v3Fields}
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
@@ -797,14 +796,13 @@ server.registerTool(
       const query = `{
         proposalVotes_collection(
           first: ${first},
-          orderBy: votingPower,
+          orderBy: forVotes,
           orderDirection: desc,
-          where: { proposalId: "${proposalId}" }
+          where: { id: "${proposalId}" }
         ) {
-          voter
-          votingPower
-          support
-          timestamp
+          id
+          forVotes
+          againstVotes
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);

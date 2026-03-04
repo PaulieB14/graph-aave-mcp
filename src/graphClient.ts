@@ -9,11 +9,8 @@ export class GraphClientError extends Error {
   }
 }
 
-// Uses The Graph's deployments/id/ endpoint with IPFS deployment hashes (Qm...).
-// This is stable and immutable — unlike subgraphs/id/ which can break when a
-// subgraph is migrated or deprecated on The Graph network.
 export async function queryChain(
-  deploymentId: string,
+  subgraphId: string,
   query: string,
   variables?: Record<string, unknown>
 ): Promise<unknown> {
@@ -25,7 +22,7 @@ export async function queryChain(
     );
   }
 
-  const url = `https://gateway.thegraph.com/api/${apiKey}/deployments/id/${deploymentId}`;
+  const url = `https://gateway.thegraph.com/api/${apiKey}/deployments/id/${subgraphId}`;
 
   const body: Record<string, unknown> = { query };
   if (variables && Object.keys(variables).length > 0) {
