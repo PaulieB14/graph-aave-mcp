@@ -9,9 +9,9 @@ export interface ChainConfig {
   isGovernance?: boolean;
 }
 
-// All deployment IDs sourced directly from The Graph — sorted by 30-day query volume.
-// Using deployment IDs (IPFS hashes) for stable, pinned resolution.
-// API endpoint format: https://gateway.thegraph.com/api/[api-key]/subgraphs/id/[deployment-id]
+// All deployment IDs are IPFS hashes (Qm...) for use with the stable
+// /deployments/id/ endpoint on The Graph gateway.
+// API endpoint format: https://gateway.thegraph.com/api/[api-key]/deployments/id/[Qm...]
 //
 // Lending protocol schema (V3): reserves, userReserves, borrows, supplies, repays,
 //   liquidationCalls, flashLoans, pool, protocol
@@ -27,7 +27,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     name: "AAVE Protocol V3 Ethereum",
     chain: "Ethereum",
     version: "v3",
-    subgraphId: "Cd2gEDVeqnjBn1hSeqFMitw8Q1iiyV9FYUZkLNRcL87g",
+    subgraphId: "QmdwBHGxokamYsLfMVk6fXfry3Ss9emEiTy6wptd1ecysG",
     queries30d: 21_600_000,
     description:
       "AAVE V3 on Ethereum mainnet — highest query volume (21.6M/30d). " +
@@ -92,6 +92,18 @@ export const CHAINS: Record<string, ChainConfig> = {
       "reserve / userReserve / borrow / supply / repay / liquidationCall / flashLoan",
     ],
   },
+  avalanche: {
+    name: "AAVE Protocol V3 Avalanche",
+    chain: "Avalanche",
+    version: "v3",
+    subgraphId: "QmXhWmYZyEr8PGEic8F739wVqvMYxHLD7jke69RXmwQU95",
+    queries30d: 1_200_000,
+    description:
+      "AAVE V3 on Avalanche — 1.2M queries/30d. AVAX ecosystem lending markets.",
+    keyEntities: [
+      "reserve / userReserve / borrow / supply / repay / liquidationCall / flashLoan",
+    ],
+  },
   "ethereum-v2": {
     name: "AAVE Protocol V2 Ethereum",
     chain: "Ethereum",
@@ -103,18 +115,6 @@ export const CHAINS: Record<string, ChainConfig> = {
       "NOTE: uses 'deposit' entity instead of 'supply' for deposit events.",
     keyEntities: [
       "reserve / userReserve / borrow / deposit (NOT supply) / repay / liquidationCall / flashLoan",
-    ],
-  },
-  avalanche: {
-    name: "AAVE Protocol V3 Avalanche",
-    chain: "Avalanche",
-    version: "v3",
-    subgraphId: "QmXhWmYZyEr8PGEic8F739wVqvMYxHLD7jke69RXmwQU95",
-    queries30d: 1_200_000,
-    description:
-      "AAVE V3 on Avalanche — 1.2M queries/30d. AVAX ecosystem lending markets.",
-    keyEntities: [
-      "reserve / userReserve / borrow / supply / repay / liquidationCall / flashLoan",
     ],
   },
   "polygon-v2": {
