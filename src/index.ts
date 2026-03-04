@@ -111,7 +111,7 @@ server.registerTool(
           totalLiquidity
           totalATokenSupply
           totalCurrentVariableDebt
-          totalCurrentStableDebt
+          totalPrincipalStableDebt
           utilizationRate
           liquidityRate
           variableBorrowRate
@@ -174,7 +174,7 @@ server.registerTool(
           totalLiquidity
           totalATokenSupply
           totalCurrentVariableDebt
-          totalCurrentStableDebt
+          totalPrincipalStableDebt
           utilizationRate
           liquidityRate
           variableBorrowRate
@@ -188,7 +188,7 @@ server.registerTool(
           aToken { id }
           vToken { id }
           sToken { id }
-          lifetimeDepositorsInterestEarned
+          lifetimeSuppliersInterestEarned
           lifetimeBorrows
           lifetimeRepayments
           lifetimeWithdrawals
@@ -463,7 +463,7 @@ server.registerTool(
           amount
           borrowRate
           borrowRateMode
-          referral
+          referrer
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
@@ -526,7 +526,7 @@ server.registerTool(
           user { id }
           reserve { symbol name decimals }
           amount
-          referral
+          referrer
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
@@ -589,7 +589,6 @@ server.registerTool(
           principalReserve { symbol name decimals }
           collateralAmount
           principalAmount
-          liquidatedCollateralAmount
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
@@ -628,7 +627,6 @@ server.registerTool(
       const query = `{
         flashLoans(first: ${first}, orderBy: timestamp, orderDirection: desc) {
           id
-          txHash
           timestamp
           initiator { id }
           reserve { symbol name decimals }
@@ -758,7 +756,6 @@ server.registerTool(
           payloads {
             id
             accessLevel
-            state
           }
         }
       }`;
