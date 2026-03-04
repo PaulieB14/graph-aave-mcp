@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.PaulieB14/graph-aave-mcp",
+  "description": "MCP server for querying AAVE V2/V3 lending protocol and governance data via The Graph subgraphs. Supports Ethereum, Base, Arbitrum, Polygon, Optimism, Avalanche, Fantom, and AAVE Governance V3.",
+  "repository": {
+    "url": "https://github.com/PaulieB14/graph-aave-mcp",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "graph-aave-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "API key for The Graph network. Required to query subgraphs. Get one free at https://thegraph.com/studio/apikeys/",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "GRAPH_API_KEY"
+        }
+      ]
+    }
+  ]
+}

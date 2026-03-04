@@ -1,0 +1,55 @@
+{
+  "name": "graph-aave-mcp",
+  "version": "1.0.0",
+  "mcpName": "io.github.PaulieB14/graph-aave-mcp",
+  "description": "MCP server for querying AAVE lending protocol data via The Graph subgraphs — Ethereum, Base, Arbitrum, Polygon, Optimism, Avalanche, Fantom, and AAVE Governance V3",
+  "type": "module",
+  "bin": {
+    "graph-aave-mcp": "build/index.js"
+  },
+  "main": "./build/index.js",
+  "scripts": {
+    "build": "tsc && chmod 755 build/index.js",
+    "start": "node build/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "build"
+  ],
+  "keywords": [
+    "mcp",
+    "aave",
+    "defi",
+    "lending",
+    "thegraph",
+    "subgraph",
+    "ethereum",
+    "health-factor",
+    "liquidation",
+    "governance",
+    "ai",
+    "claude",
+    "cursor"
+  ],
+  "author": "PaulieB14",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PaulieB14/graph-aave-mcp.git"
+  },
+  "homepage": "https://github.com/PaulieB14/graph-aave-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/PaulieB14/graph-aave-mcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
