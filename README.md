@@ -13,13 +13,15 @@
 
 **MCP server for querying [AAVE](https://aave.com/) V2/V3 lending protocol and governance data via [The Graph](https://thegraph.com/) subgraphs.**
 
-Exposes 14 tools and 5 guided prompts that any AI agent (Claude, Cursor, Copilot, etc.) can use to query lending markets, user positions, health factors, liquidations, flash loans, rate history, and AAVE governance — across 11 chains.
+Exposes 14 tools and 5 guided prompts that any AI agent (Claude, Cursor, Copilot, etc.) can use to query lending markets, user positions, health factors, liquidations, flash loans, rate history, and AAVE governance — across **7 chains** (Ethereum, Base, Arbitrum, Polygon, Optimism, Avalanche, Fantom) via **11 subgraphs** covering both V2 and V3 deployments plus AAVE Governance V3.
 
 </div>
 
 > Published to the [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.PaulieB14/graph-aave-mcp) as `io.github.PaulieB14/graph-aave-mcp`
 
-## Supported Chains
+## Supported Chains & Subgraphs
+
+7 chains, 11 subgraphs — some chains have both V2 (legacy) and V3 deployments tracked separately.
 
 | Chain | Version | Subgraph ID | 30-Day Queries |
 |-------|---------|-------------|----------------|
@@ -28,9 +30,9 @@ Exposes 14 tools and 5 guided prompts that any AI agent (Claude, Cursor, Copilot
 | Arbitrum | V3 | `DLuE98kEb5pQNXAcKFQGQgfSQ57Xdou4jnVbAEqMfy3B` | 5,600,000 |
 | Polygon | V3 | `Co2URyXjnxaw8WqxKyVHdirq9Ahhmsvcts4dMedAq211` | 2,000,000 |
 | Optimism | V3 | `DSfLz8oQBUeU5atALgUFQKMTSYV9mZAVYp4noLSXAfvb` | 1,800,000 |
-| Ethereum (alt) | V3 | `JCNWRypm7FYwV8fx5HhzZPSFaMxgkPuw4TnR3GpiB1zk` | 1,300,000 |
+| Ethereum | V3 (alt) | `JCNWRypm7FYwV8fx5HhzZPSFaMxgkPuw4TnR3GpiB1zk` | 1,300,000 |
 | Avalanche | V3 | `2h9woxy8RTjHu1HJsCEnmzpPHFArU33avmUh4f71JpVn` | 1,200,000 |
-| **Governance V3** | governance | `A7QMszgomC9cnnfpAcqZVLr2DffvkGNfimD8iUSMiurK` | 486,000 |
+| **Ethereum** | **Governance V3** | `A7QMszgomC9cnnfpAcqZVLr2DffvkGNfimD8iUSMiurK` | 486,000 |
 | Polygon | V2 | `H1Et77RZh3XEf27vkAmJyzgCME2RSFLtDS2f4PPW6CGp` | 215,830 |
 | Avalanche | V2 | `EZvK18pMhwlCjxwesRLTg81fP33WnR6BnZe5Cvma3H1C` | 133,000 |
 | Fantom | V3 | `6L1vPqyE3xvkzkWJh6wUKc1ABWYYps5HJahoxhnv2PJn` | 13,240 |
