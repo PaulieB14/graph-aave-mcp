@@ -214,15 +214,18 @@ function computePositionDashboard(data: unknown): unknown {
   const userReserves = d["userReserves"] as UserReserveRaw[] | undefined;
   if (!userReserves || userReserves.length === 0) return data;
 
-  let collateralETH = 0;
-  let debtETH = 0;
+  let collateralUSD = 0;
+  let debtUSD = 0;
   const positions: Record<string, unknown>[] = [];
   const warnings: string[] = [];
 
   for (const ur of userReserves) {
     const r = ur.reserve;
     const dec = r.decimals;
-    const priceEth = Number(r.price.priceInEth) / 1e18;
+    // V3 subgraphs store priceInEth as USD × 1e8; V2 as ETH × 1e18.
+    // Since userReserves queries only run on V3 chains (V2 unsupported),
+    // we safely use USD × 1e8 interpretation.
+    const priceUSD = Number(r.price.priceInEth) / 1e8;
     const liqThreshold = Number(r.reserveLiquidationThreshold) / 10000;
     const supplyBal = Number(ur.currentATokenBalance) / Math.pow(10, dec);
     const debtBal = Number(ur.currentTotalDebt) / Math.pow(10, dec);
@@ -234,10 +237,10 @@ function computePositionDashboard(data: unknown): unknown {
     const borrowAPY = Number(r.variableBorrowRate) / 1e27 * 100;
 
     if (ur.usageAsCollateralEnabledOnUser && hasSupply) {
-      collateralETH += supplyBal * priceEth * liqThreshold;
+      collateralUSD += supplyBal * priceUSD * liqThreshold;
     }
     if (hasDebt) {
-      debtETH += debtBal * priceEth;
+      debtUSD += debtBal * priceUSD;
     }
 
     // Withdrawal liquidity check
@@ -271,7 +274,7 @@ function computePositionDashboard(data: unknown): unknown {
     positions.push(pos);
   }
 
-  const hf = debtETH > 0 ? collateralETH / debtETH : null;
+  const hf = debtUSD > 0 ? collateralUSD / debtUSD : null;
 
   if (hf !== null) {
     if (hf < 1.0) {
@@ -283,15 +286,18 @@ function computePositionDashboard(data: unknown): unknown {
     }
   }
 
+  const fmtUSD = (v: number) => v >= 1e6 ? "$" + (v/1e6).toFixed(2) + "M"
+    : v >= 1e3 ? "$" + (v/1e3).toFixed(2) + "K" : "$" + v.toFixed(2);
+
   d["_dashboard"] = {
     healthFactor: hf !== null ? hf.toFixed(4) : "∞ (no debt)",
     healthStatus: hf === null ? "No debt — no liquidation risk" :
       hf >= 2.0 ? "Safe" : hf >= 1.5 ? "Moderate" : hf >= 1.0 ? "High Risk" : "LIQUIDATABLE",
-    collateralWeightedETH: collateralETH.toFixed(6) + " ETH",
-    debtETH: debtETH.toFixed(6) + " ETH",
+    collateralWeightedUSD: fmtUSD(collateralUSD),
+    debtUSD: fmtUSD(debtUSD),
     activePositions: positions,
     warnings: warnings.length > 0 ? warnings : ["No warnings — position looks healthy."],
-    note: "Amounts converted from raw subgraph units. ETH values use priceInEth. Health factor uses on-chain liquidation thresholds.",
+    note: "USD values from on-chain price oracle (USD × 1e8). Health factor uses on-chain liquidation thresholds.",
   };
 
   return d;
@@ -1308,13 +1314,17 @@ server.registerTool(
           const util = Number(reserve["utilizationRate"] ?? "0");
           const totalLiq = Number(reserve["totalLiquidity"] ?? "0");
           const availLiq = Number(reserve["availableLiquidity"] ?? "0");
-          const priceEth = Number(
+          const rawPrice = Number(
             ((reserve["price"] as Record<string, unknown>)?.["priceInEth"] as string) ?? "0"
-          ) / 1e18;
+          );
+          // V3 subgraphs store oracle price as USD × 1e8 (Chainlink standard).
+          // V2 subgraphs store as ETH × 1e18. Distinguish by magnitude.
+          const priceUSD = cfg.version !== "v2"
+            ? rawPrice / 1e8                     // V3: USD with 8 decimals
+            : (rawPrice / 1e18) * 3000;          // V2: ETH with 18 decimals × ~$3k
 
           const availTokens = availLiq / Math.pow(10, decimals);
-          // Approximate USD using priceInEth × $3,000 ETH; for stablecoins ≈ $1/token
-          const availLiqUSD = priceEth > 0 ? availTokens * priceEth * 3000 : availTokens;
+          const availLiqUSD = priceUSD > 0 ? availTokens * priceUSD : 0;
 
           let warning: string | undefined;
           if (totalLiq < 0) {
@@ -1363,8 +1373,8 @@ server.registerTool(
         ranked,
         _note:
           "APYs are current values from AAVE subgraphs and change continuously with utilization. " +
-          "availLiq_approxUSD uses priceInEth × $3,000 ETH — rough estimate only. " +
-          "Fantom excluded (Messari schema). V2 chains included.",
+          "availLiq_approxUSD: V3 chains use on-chain USD oracle (8 dec); V2 uses ETH oracle × $3,000 estimate. " +
+          "Fantom excluded (Messari schema incompatible). V2 legacy chains included.",
       };
 
       const best = ranked[0];
