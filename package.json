@@ -1,6 +1,6 @@
 {
   "name": "graph-aave-mcp",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "mcpName": "io.github.PaulieB14/graph-aave-mcp",
   "description": "MCP server for querying AAVE V2/V3 lending protocol and governance data via The Graph — 7 chains across 11 subgraphs (Ethereum, Base, Arbitrum, Polygon, Optimism, Avalanche, Fantom + Governance V3)",
   "type": "module",
