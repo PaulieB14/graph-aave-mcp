@@ -7,6 +7,8 @@ export interface ChainConfig {
   description: string;
   keyEntities: string[];
   isGovernance?: boolean;
+  hasIsPaused?: boolean; // false = V2-style schema, no isPaused field
+  isMessari?: boolean;   // true = Messari standardized schema (markets, not reserves)
 }
 
 // All subgraph IDs sourced directly from The Graph — sorted by 30-day query volume.
@@ -102,6 +104,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     keyEntities: [
       "reserve / userReserve / borrow / deposit (NOT supply) / repay / liquidationCall / flashLoan",
     ],
+    hasIsPaused: false,
   },
   avalanche: {
     name: "AAVE Protocol V3 Avalanche",
@@ -114,6 +117,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     keyEntities: [
       "reserve / userReserve / borrow / supply / repay / liquidationCall / flashLoan",
     ],
+    hasIsPaused: false,
   },
   "polygon-v2": {
     name: "Aave V2 Matic (Polygon)",
@@ -127,6 +131,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     keyEntities: [
       "reserve / userReserve / borrow / deposit (NOT supply) / repay / liquidationCall / flashLoan",
     ],
+    hasIsPaused: false,
   },
   "avalanche-v2": {
     name: "AAVE Protocol V2 Avalanche",
@@ -140,6 +145,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     keyEntities: [
       "reserve / userReserve / borrow / deposit (NOT supply) / repay / liquidationCall / flashLoan",
     ],
+    hasIsPaused: false,
   },
   fantom: {
     name: "AAVE Protocol V3 Fantom",
@@ -148,10 +154,13 @@ export const CHAINS: Record<string, ChainConfig> = {
     subgraphId: "QmNTzi2eFS2boHFFY372xrxGHNM8yPjF26H3eUxWTtnvoA",
     queries30d: 13_240,
     description:
-      "AAVE V3 on Fantom — 13K queries/30d. Smaller Fantom deployment.",
+      "AAVE V3 on Fantom — 13K queries/30d. Smaller Fantom deployment. " +
+      "Uses Messari standardized schema: markets (not reserves), flashloans (lowercase).",
     keyEntities: [
-      "reserve / userReserve / borrow / supply / repay / liquidationCall / flashLoan",
+      "market (name, inputToken, totalValueLockedUSD, totalBorrowBalanceUSD, rates, maximumLTV, liquidationThreshold)",
     ],
+    hasIsPaused: false,
+    isMessari: true,
   },
   governance: {
     name: "AAVE Governance V3 (Ethereum)",

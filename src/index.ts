@@ -94,6 +94,32 @@ server.registerTool(
   async ({ chain, includeInactive }) => {
     try {
       const cfg = CHAINS[chain];
+
+      // Fantom uses Messari standardized schema (markets, not reserves)
+      if (cfg.isMessari) {
+        const activeFilter = includeInactive ? "" : ", where: { isActive: true }";
+        const query = `{
+          markets(first: 100, orderBy: totalValueLockedUSD, orderDirection: desc${activeFilter}) {
+            id
+            name
+            isActive
+            canBorrowFrom
+            canUseAsCollateral
+            maximumLTV
+            liquidationThreshold
+            liquidationPenalty
+            totalValueLockedUSD
+            totalBorrowBalanceUSD
+            totalDepositBalanceUSD
+            inputToken { id symbol name decimals }
+            rates { side type rate }
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
+      const isPausedField = cfg.hasIsPaused !== false ? "\n          isPaused" : "";
       const where = includeInactive ? "" : ", where: { isActive: true }";
       const query = `{
         reserves(first: 100, orderBy: totalLiquidity, orderDirection: desc${where}) {
@@ -103,8 +129,7 @@ server.registerTool(
           decimals
           underlyingAsset
           isActive
-          isFrozen
-          isPaused
+          isFrozen${isPausedField}
           borrowingEnabled
           usageAsCollateralEnabled
           availableLiquidity
@@ -158,6 +183,31 @@ server.registerTool(
   async ({ chain, symbol }) => {
     try {
       const cfg = CHAINS[chain];
+
+      // Fantom uses Messari standardized schema (markets, not reserves)
+      if (cfg.isMessari) {
+        const query = `{
+          markets(where: { name_contains: "${symbol.toUpperCase()}" }, first: 5) {
+            id
+            name
+            isActive
+            canBorrowFrom
+            canUseAsCollateral
+            maximumLTV
+            liquidationThreshold
+            liquidationPenalty
+            totalValueLockedUSD
+            totalBorrowBalanceUSD
+            totalDepositBalanceUSD
+            inputToken { id symbol name decimals }
+            rates { side type rate }
+          }
+        }`;
+        const data = await queryChain(cfg.subgraphId, query);
+        return textResult(data);
+      }
+
+      const isPausedField = cfg.hasIsPaused !== false ? "\n          isPaused" : "";
       const query = `{
         reserves(where: { symbol: "${symbol.toUpperCase()}" }) {
           id
@@ -166,8 +216,7 @@ server.registerTool(
           decimals
           underlyingAsset
           isActive
-          isFrozen
-          isPaused
+          isFrozen${isPausedField}
           borrowingEnabled
           usageAsCollateralEnabled
           availableLiquidity
