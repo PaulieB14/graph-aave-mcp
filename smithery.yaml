@@ -4,14 +4,15 @@ startCommand:
   type: stdio
   configSchema:
     type: object
-    required: []
+    required:
+      - graphApiKey
     properties:
       graphApiKey:
         type: string
-        description: API key for The Graph network. Get one free at https://thegraph.com/studio/
+        description: API key for The Graph network. Required. Get one free at https://thegraph.com/studio/apikeys/
   commandFunction: |-
     config => ({
       command: 'npx',
       args: ['-y', 'graph-aave-mcp'],
-      env: config.graphApiKey ? { GRAPH_API_KEY: config.graphApiKey } : {}
+      env: { GRAPH_API_KEY: config.graphApiKey }
     })
