@@ -9,10 +9,11 @@ export class GraphClientError extends Error {
   }
 }
 
-// Uses The Graph's subgraphs/id/ endpoint — always resolves to the latest deployment
-// for the given subgraph ID, so no IPFS hash pinning is needed.
+// Uses The Graph's deployments/id/ endpoint with IPFS deployment hashes (Qm...).
+// This is stable and immutable — unlike subgraphs/id/ which can break when a
+// subgraph is migrated or deprecated on The Graph network.
 export async function queryChain(
-  subgraphId: string,
+  deploymentId: string,
   query: string,
   variables?: Record<string, unknown>
 ): Promise<unknown> {
@@ -24,7 +25,7 @@ export async function queryChain(
     );
   }
 
-  const url = `https://gateway.thegraph.com/api/${apiKey}/subgraphs/id/${subgraphId}`;
+  const url = `https://gateway.thegraph.com/api/${apiKey}/deployments/id/${deploymentId}`;
 
   const body: Record<string, unknown> = { query };
   if (variables && Object.keys(variables).length > 0) {
