@@ -29,6 +29,113 @@ function errorResult(error: unknown) {
 }
 
 // ---------------------------------------------------------------------------
+// Data quality annotations for reserve responses
+// ---------------------------------------------------------------------------
+// Many AAVE subgraph reserves contain accounting artifacts that can
+// confuse AI agents: negative TVL from token migrations, >100% utilization,
+// expired Pendle PT tokens, and interest-accrual timing glitches.
+// This annotates reserves in-place and adds a top-level summary.
+
+const MONTH_ABBR: Record<string, number> = {
+  JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+  JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+};
+
+function parsePTMaturity(symbol: string): Date | null {
+  const m = symbol.match(/(\d{1,2})([A-Z]{3})(\d{4})$/);
+  if (!m) return null;
+  const month = MONTH_ABBR[m[2]];
+  if (month === undefined) return null;
+  return new Date(parseInt(m[3]), month, parseInt(m[1]));
+}
+
+function annotateReserves(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data;
+  const d = data as Record<string, unknown>;
+
+  // Works for both { reserves: [...] } and { markets: [...] } shapes
+  const key = Array.isArray(d["reserves"])
+    ? "reserves"
+    : Array.isArray(d["markets"])
+    ? "markets"
+    : null;
+  if (!key) return data;
+
+  const reserves = d[key] as Array<Record<string, unknown>>;
+  const now = new Date();
+  const flagged: string[] = [];
+
+  for (const reserve of reserves) {
+    const warnings: string[] = [];
+    const symbol = (reserve["symbol"] ?? reserve["name"] ?? "") as string;
+    const decimals = Number(reserve["decimals"] ?? 18);
+    const rawLiq = reserve["totalLiquidity"] as string | undefined;
+    const rawUtil = reserve["utilizationRate"] as string | undefined;
+
+    if (rawLiq !== undefined) {
+      const liq = Number(rawLiq);
+      if (!isNaN(liq) && liq < 0) {
+        const humanLiq = (liq / Math.pow(10, decimals)).toFixed(2);
+        warnings.push(
+          `NEGATIVE_LIQUIDITY (${humanLiq}): debt exceeds deposits — ` +
+          `accounting artifact from token migration or interest accrual timing. ` +
+          `Do not treat this as real TVL.`
+        );
+      }
+    }
+
+    if (rawUtil !== undefined) {
+      const util = Number(rawUtil);
+      if (!isNaN(util)) {
+        if (util > 1.0) {
+          warnings.push(
+            `OVER_UTILIZED (${(util * 100).toFixed(1)}%): utilization >100% is impossible in a healthy pool — ` +
+            `accounting artifact, typically from token migrations where debt persists after supply is removed.`
+          );
+        } else if (util < -0.05) {
+          // Only flag significant negative util (>5%), minor ones are timing noise
+          warnings.push(
+            `NEGATIVE_UTILIZATION (${(util * 100).toFixed(2)}%): interest accrual or accounting artifact — ` +
+            `ignore for rate calculations. Actual utilization is effectively 0%.`
+          );
+        }
+      }
+    }
+
+    // Pendle PT token maturity check
+    if (symbol.startsWith("PT-")) {
+      const maturity = parsePTMaturity(symbol);
+      if (maturity && maturity < now) {
+        const dateStr = maturity.toLocaleDateString("en-US", {
+          year: "numeric", month: "short", day: "numeric",
+        });
+        warnings.push(
+          `EXPIRED_PENDLE_PT (matured ${dateStr}): this principal token has passed maturity. ` +
+          `It now trades at par and its risk profile has fundamentally changed. ` +
+          `The near-zero liquidation threshold (${reserve["reserveLiquidationThreshold"] ?? "?"}bps) ` +
+          `means positions cannot be effectively liquidated.`
+        );
+      }
+    }
+
+    if (warnings.length > 0) {
+      reserve["_dataQualityWarnings"] = warnings;
+      flagged.push(symbol);
+    }
+  }
+
+  if (flagged.length > 0) {
+    d["_anomalousReserves"] = flagged;
+    d["_dataQualityNote"] =
+      `${flagged.length} reserve(s) have data quality warnings (see _dataQualityWarnings on each). ` +
+      `Raw subgraph values are preserved. These are on-chain accounting artifacts, not MCP errors. ` +
+      `Flagged: ${flagged.join(", ")}`;
+  }
+
+  return d;
+}
+
+// ---------------------------------------------------------------------------
 // Tool 1 — list_aave_chains
 // ---------------------------------------------------------------------------
 server.registerTool(
@@ -116,7 +223,7 @@ server.registerTool(
           }
         }`;
         const data = await queryChain(cfg.subgraphId, query);
-        return textResult(data);
+        return textResult(annotateReserves(data));
       }
 
       const isPausedField = cfg.hasIsPaused !== false ? "\n          isPaused" : "";
@@ -151,7 +258,7 @@ server.registerTool(
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
-      return textResult(data);
+      return textResult(annotateReserves(data));
     } catch (error) {
       return errorResult(error);
     }
@@ -204,7 +311,7 @@ server.registerTool(
           }
         }`;
         const data = await queryChain(cfg.subgraphId, query);
-        return textResult(data);
+        return textResult(annotateReserves(data));
       }
 
       const v3Only = cfg.hasIsPaused !== false;
@@ -247,7 +354,7 @@ server.registerTool(
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
-      return textResult(data);
+      return textResult(annotateReserves(data));
     } catch (error) {
       return errorResult(error);
     }
