@@ -14,6 +14,24 @@ const server = new McpServer({
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Format a raw token amount (BigInt string + decimals) into human-readable form */
+function humanAmount(raw: string, decimals: number, symbol = ""): string {
+  const n = Number(raw) / Math.pow(10, decimals);
+  let formatted: string;
+  if (Math.abs(n) >= 1e9) formatted = (n / 1e9).toFixed(2) + "B";
+  else if (Math.abs(n) >= 1e6) formatted = (n / 1e6).toFixed(2) + "M";
+  else if (Math.abs(n) >= 1e3) formatted = (n / 1e3).toFixed(2) + "K";
+  else if (Math.abs(n) >= 1) formatted = n.toFixed(4);
+  else formatted = n.toFixed(8);
+  return symbol ? formatted + " " + symbol : formatted;
+}
+
+/** Convert a RAY-unit rate (1e27) to APY percentage string */
+function rayToAPY(raw: string): string {
+  return (Number(raw) / 1e27 * 100).toFixed(2) + "%";
+}
+
 function textResult(data: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -122,6 +140,39 @@ function annotateReserves(data: unknown): unknown {
       reserve["_dataQualityWarnings"] = warnings;
       flagged.push(symbol);
     }
+
+    // Always add _humanReadable for AAVE-native reserves (not Messari markets)
+    if (reserve["totalLiquidity"] !== undefined) {
+      const h: Record<string, unknown> = {};
+      const lr = reserve["liquidityRate"] as string | undefined;
+      const vbr = reserve["variableBorrowRate"] as string | undefined;
+      const sbr = reserve["stableBorrowRate"] as string | undefined;
+      const rawUtil = reserve["utilizationRate"] as string | undefined;
+      const rawLiq = reserve["totalLiquidity"] as string | undefined;
+      const rawAvail = reserve["availableLiquidity"] as string | undefined;
+      const baseLTV = reserve["baseLTVasCollateral"] as string | undefined;
+      const liqThresh = reserve["reserveLiquidationThreshold"] as string | undefined;
+      const liqBonus = reserve["reserveLiquidationBonus"] as string | undefined;
+
+      if (lr) h["supplyAPY"] = rayToAPY(lr);
+      if (vbr) h["variableBorrowAPY"] = rayToAPY(vbr);
+      if (sbr && Number(sbr) > 0) h["stableBorrowAPY"] = rayToAPY(sbr);
+
+      if (rawUtil !== undefined) {
+        const u = Number(rawUtil);
+        h["utilization"] = (!isNaN(u) && u >= 0 && u <= 1)
+          ? (u * 100).toFixed(1) + "%" : "anomalous (see _dataQualityWarnings)";
+      }
+      if (rawLiq !== undefined) h["totalLiquidity"] = humanAmount(rawLiq, decimals, symbol);
+      if (rawAvail !== undefined) h["availableLiquidity"] = humanAmount(rawAvail, decimals, symbol);
+      if (baseLTV !== undefined) h["maxLTV"] = (Number(baseLTV) / 100).toFixed(2) + "%";
+      if (liqThresh !== undefined) h["liquidationThreshold"] = (Number(liqThresh) / 100).toFixed(2) + "%";
+      if (liqBonus !== undefined) {
+        const penalty = (Number(liqBonus) / 100 - 100).toFixed(2);
+        if (Number(penalty) > 0) h["liquidationPenalty"] = penalty + "%";
+      }
+      reserve["_humanReadable"] = h;
+    }
   }
 
   if (flagged.length > 0) {
@@ -131,6 +182,117 @@ function annotateReserves(data: unknown): unknown {
       `Raw subgraph values are preserved. These are on-chain accounting artifacts, not MCP errors. ` +
       `Flagged: ${flagged.join(", ")}`;
   }
+
+  return d;
+}
+
+// ---------------------------------------------------------------------------
+// Position dashboard — synthesizes raw userReserves into human-readable summary
+// ---------------------------------------------------------------------------
+interface UserReserveRaw {
+  reserve: {
+    symbol: string;
+    decimals: number;
+    liquidityRate: string;
+    variableBorrowRate: string;
+    baseLTVasCollateral: string;
+    reserveLiquidationThreshold: string;
+    price: { priceInEth: string };
+    utilizationRate: string;
+    availableLiquidity: string;
+  };
+  currentATokenBalance: string;
+  currentVariableDebt: string;
+  currentStableDebt: string;
+  currentTotalDebt: string;
+  usageAsCollateralEnabledOnUser: boolean;
+}
+
+function computePositionDashboard(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data;
+  const d = data as Record<string, unknown>;
+  const userReserves = d["userReserves"] as UserReserveRaw[] | undefined;
+  if (!userReserves || userReserves.length === 0) return data;
+
+  let collateralETH = 0;
+  let debtETH = 0;
+  const positions: Record<string, unknown>[] = [];
+  const warnings: string[] = [];
+
+  for (const ur of userReserves) {
+    const r = ur.reserve;
+    const dec = r.decimals;
+    const priceEth = Number(r.price.priceInEth) / 1e18;
+    const liqThreshold = Number(r.reserveLiquidationThreshold) / 10000;
+    const supplyBal = Number(ur.currentATokenBalance) / Math.pow(10, dec);
+    const debtBal = Number(ur.currentTotalDebt) / Math.pow(10, dec);
+    const hasSupply = supplyBal > 1e-12;
+    const hasDebt = debtBal > 1e-12;
+    if (!hasSupply && !hasDebt) continue;
+
+    const supplyAPY = Number(r.liquidityRate) / 1e27 * 100;
+    const borrowAPY = Number(r.variableBorrowRate) / 1e27 * 100;
+
+    if (ur.usageAsCollateralEnabledOnUser && hasSupply) {
+      collateralETH += supplyBal * priceEth * liqThreshold;
+    }
+    if (hasDebt) {
+      debtETH += debtBal * priceEth;
+    }
+
+    // Withdrawal liquidity check
+    const util = Number(r.utilizationRate);
+    if (hasSupply && util > 0.95) {
+      const avail = Number(r.availableLiquidity) / Math.pow(10, dec);
+      const withdrawable = Math.min(supplyBal, avail);
+      warnings.push(
+        `⚠️ ${r.symbol} pool is ${(util * 100).toFixed(0)}% utilized — ` +
+        `only ~${humanAmount(String(Math.round(withdrawable * Math.pow(10, dec))), dec, r.symbol)} ` +
+        `available to withdraw (your balance: ${humanAmount(ur.currentATokenBalance, dec, r.symbol)})`
+      );
+    }
+
+    const pos: Record<string, unknown> = { asset: r.symbol };
+    if (hasSupply) {
+      pos["supplied"] = humanAmount(ur.currentATokenBalance, dec, r.symbol);
+      pos["supplyAPY"] = supplyAPY.toFixed(2) + "%";
+      pos["collateralEnabled"] = ur.usageAsCollateralEnabledOnUser;
+      pos["earningPerYear_approx"] = humanAmount(
+        String(Math.round(supplyBal * supplyAPY / 100 * Math.pow(10, dec))), dec, r.symbol
+      );
+    }
+    if (hasDebt) {
+      pos["borrowed"] = humanAmount(ur.currentTotalDebt, dec, r.symbol);
+      pos["variableBorrowAPY"] = borrowAPY.toFixed(2) + "%";
+      pos["costPerYear_approx"] = humanAmount(
+        String(Math.round(debtBal * borrowAPY / 100 * Math.pow(10, dec))), dec, r.symbol
+      );
+    }
+    positions.push(pos);
+  }
+
+  const hf = debtETH > 0 ? collateralETH / debtETH : null;
+
+  if (hf !== null) {
+    if (hf < 1.0) {
+      warnings.push("🚨 LIQUIDATABLE: health factor below 1.0 — repay debt or add collateral immediately.");
+    } else if (hf < 1.2) {
+      warnings.push(`⚠️ HIGH RISK: health factor ${hf.toFixed(2)} is dangerously close to liquidation (1.0). Add collateral or repay debt.`);
+    } else if (hf < 1.5) {
+      warnings.push(`⚠️ MODERATE RISK: health factor ${hf.toFixed(2)}. Recommend keeping above 1.5 as a safety buffer.`);
+    }
+  }
+
+  d["_dashboard"] = {
+    healthFactor: hf !== null ? hf.toFixed(4) : "∞ (no debt)",
+    healthStatus: hf === null ? "No debt — no liquidation risk" :
+      hf >= 2.0 ? "Safe" : hf >= 1.5 ? "Moderate" : hf >= 1.0 ? "High Risk" : "LIQUIDATABLE",
+    collateralWeightedETH: collateralETH.toFixed(6) + " ETH",
+    debtETH: debtETH.toFixed(6) + " ETH",
+    activePositions: positions,
+    warnings: warnings.length > 0 ? warnings : ["No warnings — position looks healthy."],
+    note: "Amounts converted from raw subgraph units. ETH values use priceInEth. Health factor uses on-chain liquidation thresholds.",
+  };
 
   return d;
 }
@@ -407,6 +569,8 @@ server.registerTool(
             baseLTVasCollateral
             reserveLiquidationThreshold
             reserveLiquidationBonus
+            utilizationRate
+            availableLiquidity
             price { priceInEth }
           }
           scaledATokenBalance
@@ -427,7 +591,7 @@ server.registerTool(
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
-      return textResult(data);
+      return textResult(computePositionDashboard(data));
     } catch (error) {
       return errorResult(error);
     }
@@ -1051,7 +1215,188 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// Tool 11 — get_governance_proposals
+// Tool 11 — find_best_rates
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "find_best_rates",
+  {
+    description:
+      "Use this when the user asks 'Where should I supply USDC for the best yield?', " +
+      "'Which chain has the lowest WETH borrow rate?', " +
+      "'Compare AAVE rates across chains for USDC', " +
+      "'Best AAVE lending rates for DAI'. " +
+      "Queries all AAVE lending deployments in parallel for the given asset, then ranks by APY. " +
+      "Excludes Fantom (incompatible Messari schema) and skips anomalous pools. " +
+      "Returns a ranked table with chain, supply APY, variable borrow APY, utilization, and approx available liquidity. " +
+      "Includes a _recommendation field with the best option.",
+    inputSchema: {
+      asset: z
+        .string()
+        .describe(
+          "Token symbol to compare, e.g. 'USDC', 'WETH', 'USDT', 'WBTC', 'DAI'. " +
+            "Case-insensitive partial match (e.g. 'USDC' matches 'USDC.e')."
+        ),
+      side: z
+        .enum(["supply", "borrow"])
+        .default("supply")
+        .describe(
+          "'supply' = rank by highest supply APY; 'borrow' = rank by lowest variable borrow APY. Default: supply."
+        ),
+      minLiquidityUSD: z
+        .number()
+        .default(100_000)
+        .describe(
+          "Minimum available liquidity (approx USD) to include a market. Default $100K. Set to 0 to include all."
+        ),
+    },
+  },
+  async ({ asset, side, minLiquidityUSD }) => {
+    try {
+      const assetUpper = asset.toUpperCase();
+      const chains = LENDING_CHAIN_NAMES.filter((n) => !CHAINS[n].isMessari);
+
+      const query = `{
+        reserves(
+          where: { symbol_contains_nocase: "${assetUpper}" }
+          first: 20
+        ) {
+          symbol
+          decimals
+          liquidityRate
+          variableBorrowRate
+          utilizationRate
+          totalLiquidity
+          availableLiquidity
+          price { priceInEth }
+        }
+      }`;
+
+      const settled = await Promise.allSettled(
+        chains.map(async (chainKey) => {
+          const cfg = CHAINS[chainKey];
+          const data = await queryChain(cfg.subgraphId, query);
+          return { chainKey, cfg, data };
+        })
+      );
+
+      type Row = {
+        chain: string;
+        chainKey: string;
+        symbol: string;
+        supplyAPY: number;
+        variableBorrowAPY: number;
+        utilization: number;
+        availLiqUSD: number;
+        warning?: string;
+      };
+
+      const rows: Row[] = [];
+
+      for (const result of settled) {
+        if (result.status !== "fulfilled") continue;
+        const { chainKey, cfg, data } = result.value;
+        const reserves = (data as Record<string, unknown>)["reserves"] as
+          | Array<Record<string, unknown>>
+          | undefined;
+        if (!reserves || reserves.length === 0) continue;
+
+        for (const reserve of reserves) {
+          const sym = reserve["symbol"] as string;
+          const decimals = Number(reserve["decimals"] ?? 18);
+          const supplyAPY = Number(reserve["liquidityRate"] ?? "0") / 1e27 * 100;
+          const borrowAPY = Number(reserve["variableBorrowRate"] ?? "0") / 1e27 * 100;
+          const util = Number(reserve["utilizationRate"] ?? "0");
+          const totalLiq = Number(reserve["totalLiquidity"] ?? "0");
+          const availLiq = Number(reserve["availableLiquidity"] ?? "0");
+          const priceEth = Number(
+            ((reserve["price"] as Record<string, unknown>)?.["priceInEth"] as string) ?? "0"
+          ) / 1e18;
+
+          const availTokens = availLiq / Math.pow(10, decimals);
+          // Approximate USD using priceInEth × $3,000 ETH; for stablecoins ≈ $1/token
+          const availLiqUSD = priceEth > 0 ? availTokens * priceEth * 3000 : availTokens;
+
+          let warning: string | undefined;
+          if (totalLiq < 0) {
+            warning = "NEGATIVE_LIQUIDITY — accounting artifact from token migration";
+          } else if (util > 1.0) {
+            warning = `OVER_UTILIZED (${(util * 100).toFixed(0)}%) — accounting artifact`;
+          }
+
+          rows.push({ chain: cfg.chain, chainKey, symbol: sym, supplyAPY, variableBorrowAPY: borrowAPY, utilization: util, availLiqUSD, warning });
+        }
+      }
+
+      if (rows.length === 0) {
+        return textResult({ message: `No AAVE markets found for '${asset}'.` });
+      }
+
+      const healthy = rows.filter((r) => !r.warning && r.availLiqUSD >= minLiquidityUSD);
+      const anomalous = rows.filter((r) => !!r.warning);
+      const tooSmall = rows.filter((r) => !r.warning && r.availLiqUSD < minLiquidityUSD);
+
+      if (side === "supply") {
+        healthy.sort((a, b) => b.supplyAPY - a.supplyAPY);
+      } else {
+        healthy.sort((a, b) => a.variableBorrowAPY - b.variableBorrowAPY);
+      }
+
+      const fmtUSD = (usd: number) =>
+        usd >= 1e9 ? "$" + (usd / 1e9).toFixed(2) + "B"
+        : usd >= 1e6 ? "$" + (usd / 1e6).toFixed(1) + "M"
+        : usd >= 1e3 ? "$" + (usd / 1e3).toFixed(0) + "K"
+        : "$" + usd.toFixed(0);
+
+      const ranked = healthy.map((r, i) => ({
+        rank: i + 1,
+        chain: r.chain,
+        symbol: r.symbol,
+        supplyAPY: r.supplyAPY.toFixed(2) + "%",
+        variableBorrowAPY: r.variableBorrowAPY.toFixed(2) + "%",
+        utilization: (r.utilization * 100).toFixed(1) + "%",
+        availLiq_approxUSD: fmtUSD(r.availLiqUSD),
+      }));
+
+      const response: Record<string, unknown> = {
+        asset: assetUpper,
+        side,
+        ranked,
+        _note:
+          "APYs are current values from AAVE subgraphs and change continuously with utilization. " +
+          "availLiq_approxUSD uses priceInEth × $3,000 ETH — rough estimate only. " +
+          "Fantom excluded (Messari schema). V2 chains included.",
+      };
+
+      const best = ranked[0];
+      if (best) {
+        response["_recommendation"] =
+          side === "supply"
+            ? `Best supply rate: ${best.chain} ${best.symbol} at ${best.supplyAPY} APY (~${best.availLiq_approxUSD} available to deposit).`
+            : `Lowest borrow rate: ${best.chain} ${best.symbol} at ${best.variableBorrowAPY} variable APY.`;
+      } else {
+        response["_recommendation"] = `No healthy markets found for '${asset}' meeting the liquidity threshold ($${minLiquidityUSD.toLocaleString()}).`;
+      }
+
+      if (anomalous.length > 0) {
+        response["_skippedAnomalous"] = anomalous.map(
+          (r) => `${r.chain} ${r.symbol}: ${r.warning}`
+        );
+      }
+      if (tooSmall.length > 0) {
+        response["_skippedLowLiquidity"] = tooSmall.map(
+          (r) => `${r.chain} ${r.symbol}: ~${fmtUSD(r.availLiqUSD)} available`
+        );
+      }
+
+      return textResult(response);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 12 — get_governance_proposals
 // ---------------------------------------------------------------------------
 server.registerTool(
   "get_governance_proposals",
@@ -1113,7 +1458,7 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// Tool 12 — get_proposal_votes
+// Tool 13 — get_proposal_votes
 // ---------------------------------------------------------------------------
 server.registerTool(
   "get_proposal_votes",
