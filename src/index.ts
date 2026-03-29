@@ -5,10 +5,18 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { queryChain } from "./graphClient.js";
 import { CHAINS, CHAIN_NAMES, LENDING_CHAIN_NAMES } from "./subgraphs.js";
+import {
+  getV4Hubs,
+  getV4Spokes,
+  getV4Reserves,
+  getV4UserPositions,
+  getV4UserSupplies,
+  getV4UserBorrows,
+} from "./aaveV4Api.js";
 
 const server = new McpServer({
   name: "graph-aave-mcp",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 // ---------------------------------------------------------------------------
@@ -1731,6 +1739,178 @@ server.registerPrompt(
 3. Identify any currently Active (state=1) or Queued (state=2) proposals
 4. For the most voted proposal, call get_proposal_votes(proposalId=X, first=10) to show top voters and their voting power
 5. Summarize: recent governance decisions, current active votes, and overall governance participation`,
+        },
+      },
+    ],
+  })
+);
+
+// ===========================================================================
+// Aave V4 Tools — powered by AaveKit GraphQL API (api.aave.com)
+// No API key needed. V4 is not yet live — tools will return a helpful
+// message until the API is reachable, then work automatically.
+// When V4 subgraphs ship on The Graph, these can be migrated by adding
+// entries to subgraphs.ts.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Tool 16: get_v4_hubs
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_v4_hubs",
+  {
+    description:
+      "Get Aave V4 liquidity hubs. Hubs are the core liquidity pools in V4's new cross-chain architecture — each hub aggregates deposits, borrows, and available liquidity across connected spokes. No API key needed. For V2/V3 reserve data, use get_aave_reserves instead.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const data = await getV4Hubs();
+      return textResult({ source: "aave-v4-api", note: "V4 hub data from api.aave.com (not subgraph). When V4 subgraphs launch on The Graph, this will migrate to subgraph queries.", data });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 17: get_v4_spokes
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_v4_spokes",
+  {
+    description:
+      "Get Aave V4 cross-chain spokes. Spokes are chain-specific deployment points connected to a hub — they enable cross-chain lending where a user can supply on one chain and borrow on another. No API key needed.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const data = await getV4Spokes();
+      return textResult({ source: "aave-v4-api", data });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 18: get_v4_reserves
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_v4_reserves",
+  {
+    description:
+      "Get Aave V4 reserve data including supply/borrow APYs, utilization, risk parameters, and caps. Comparable to get_aave_reserves but for V4 — includes V4-specific fields like supplyCap, borrowCap, and reserveFactor. No API key needed. Use get_aave_reserves for V2/V3 data.",
+    inputSchema: {
+      chainId: z.number().optional().describe("Filter by chain ID (e.g. 1 for Ethereum, 137 for Polygon, 42161 for Arbitrum). Omit for all chains."),
+    },
+  },
+  async ({ chainId }) => {
+    try {
+      const data = await getV4Reserves(chainId);
+      return textResult({ source: "aave-v4-api", chainId: chainId ?? "all", data });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 19: get_v4_user_positions
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_v4_user_positions",
+  {
+    description:
+      "Get a user's Aave V4 positions across all chains — health factor, total collateral, total debt, borrowing power, and per-asset supplies/borrows. This is the V4 equivalent of get_aave_user_position but works cross-chain automatically. No API key needed. Use get_aave_user_position for V2/V3 positions.",
+    inputSchema: {
+      userAddress: z.string().describe("User's EVM wallet address (0x...)"),
+    },
+  },
+  async ({ userAddress }) => {
+    try {
+      const data = await getV4UserPositions(userAddress);
+      return textResult({ source: "aave-v4-api", user: userAddress, data });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 20: get_v4_user_supplies
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_v4_user_supplies",
+  {
+    description:
+      "Get a user's Aave V4 supply positions with APY and collateral status. Optionally filter by chain. No API key needed.",
+    inputSchema: {
+      userAddress: z.string().describe("User's EVM wallet address (0x...)"),
+      chainId: z.number().optional().describe("Filter by chain ID (e.g. 1 for Ethereum). Omit for all chains."),
+    },
+  },
+  async ({ userAddress, chainId }) => {
+    try {
+      const data = await getV4UserSupplies(userAddress, chainId);
+      return textResult({ source: "aave-v4-api", user: userAddress, chainId: chainId ?? "all", data });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 21: get_v4_user_borrows
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_v4_user_borrows",
+  {
+    description:
+      "Get a user's Aave V4 borrow positions with APY, principal, interest, and total debt. Optionally filter by chain. No API key needed.",
+    inputSchema: {
+      userAddress: z.string().describe("User's EVM wallet address (0x...)"),
+      chainId: z.number().optional().describe("Filter by chain ID (e.g. 1 for Ethereum). Omit for all chains."),
+    },
+  },
+  async ({ userAddress, chainId }) => {
+    try {
+      const data = await getV4UserBorrows(userAddress, chainId);
+      return textResult({ source: "aave-v4-api", user: userAddress, chainId: chainId ?? "all", data });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Prompt: aave_full_stack_analysis (combines V2/V3 subgraphs + V4 API)
+// ---------------------------------------------------------------------------
+server.registerPrompt(
+  "aave_full_stack_analysis",
+  {
+    description:
+      "Full-stack Aave analysis combining V2/V3 subgraph data with V4 API data — compare rates, positions, and liquidity across all versions",
+    argsSchema: {
+      userAddress: z.string().optional().describe("Optional user address to analyze positions across V2/V3/V4"),
+    },
+  },
+  ({ userAddress }) => ({
+    messages: [
+      {
+        role: "user" as const,
+        content: {
+          type: "text" as const,
+          text: `Do a full-stack Aave analysis across V2, V3, and V4. Follow these steps:
+1. Call get_v4_hubs to see V4's cross-chain liquidity hubs
+2. Call get_v4_reserves to get V4 supply/borrow rates and utilization
+3. Call get_aave_reserves(chain="ethereum") to get V3 Ethereum rates for comparison
+4. Compare V3 vs V4: which version has better supply APY for major assets (USDC, ETH, WBTC)?
+5. Call get_v4_spokes to understand V4's cross-chain deployment topology
+${userAddress ? `6. Call get_v4_user_positions(userAddress="${userAddress}") for their V4 positions
+7. Call get_aave_user_position(chain="ethereum", userAddress="${userAddress}") for their V3 positions
+8. Compare: which version has better rates for this user's specific assets?` : ""}
+Summarize: V4 hub/spoke architecture overview, rate comparison V3 vs V4, liquidity distribution, ${userAddress ? "and user position analysis across versions" : "and migration opportunities"}`,
         },
       },
     ],
