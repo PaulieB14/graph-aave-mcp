@@ -56,6 +56,8 @@ export GRAPH_API_KEY=your-key-here
 
 Free Graph API key: [thegraph.com/studio](https://thegraph.com/studio/) (100K queries/month free tier).
 
+**Hosted deployment** (no install): [Fronteir AI](https://fronteir.ai/mcp/paulieb14-graph-aave-mcp)
+
 ---
 
 ## V2/V3 Tools (The Graph Subgraphs)
