@@ -9,9 +9,19 @@ import {
   getV4Hubs,
   getV4Spokes,
   getV4Reserves,
+  getV4Chains,
+  getV4ExchangeRate,
+  getV4Asset,
+  getV4AssetPriceHistory,
+  getV4ProtocolHistory,
   getV4UserPositions,
+  getV4UserSummary,
   getV4UserSupplies,
   getV4UserBorrows,
+  getV4UserBalances,
+  getV4UserActivities,
+  getV4ClaimableRewards,
+  getV4SwapQuote,
 } from "./aaveV4Api.js";
 
 const server = new McpServer({
@@ -1753,135 +1763,144 @@ server.registerPrompt(
 // entries to subgraphs.ts.
 // ===========================================================================
 
-// ---------------------------------------------------------------------------
 // Tool 16: get_v4_hubs
-// ---------------------------------------------------------------------------
-server.registerTool(
-  "get_v4_hubs",
-  {
-    description:
-      "Get Aave V4 liquidity hubs. Hubs are the core liquidity pools in V4's new cross-chain architecture — each hub aggregates deposits, borrows, and available liquidity across connected spokes. No API key needed. For V2/V3 reserve data, use get_aave_reserves instead.",
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const data = await getV4Hubs();
-      return textResult({ source: "aave-v4-api", note: "V4 hub data from api.aave.com (not subgraph). When V4 subgraphs launch on The Graph, this will migrate to subgraph queries.", data });
-    } catch (error) {
-      return errorResult(error);
-    }
-  }
-);
+server.registerTool("get_v4_hubs", {
+  description: "Get Aave V4 liquidity hubs (Core, Plus, Prime) with TVL, utilization, and supply/borrow caps. No API key needed.",
+  inputSchema: { chainId: z.number().optional().describe("Chain ID (1=Ethereum). Defaults to Ethereum.") },
+}, async ({ chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4Hubs(chainId) }); } catch (e) { return errorResult(e); } });
 
-// ---------------------------------------------------------------------------
 // Tool 17: get_v4_spokes
-// ---------------------------------------------------------------------------
-server.registerTool(
-  "get_v4_spokes",
-  {
-    description:
-      "Get Aave V4 cross-chain spokes. Spokes are chain-specific deployment points connected to a hub — they enable cross-chain lending where a user can supply on one chain and borrow on another. No API key needed.",
-    inputSchema: {},
-  },
-  async () => {
-    try {
-      const data = await getV4Spokes();
-      return textResult({ source: "aave-v4-api", data });
-    } catch (error) {
-      return errorResult(error);
-    }
-  }
-);
+server.registerTool("get_v4_spokes", {
+  description: "Get Aave V4 spokes (Main, Bluechip, Kelp, Lido, Ethena, EtherFi, etc.). Spokes are chain-specific deployment points enabling cross-chain lending. No API key needed.",
+  inputSchema: { chainId: z.number().optional().describe("Chain ID. Defaults to Ethereum.") },
+}, async ({ chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4Spokes(chainId) }); } catch (e) { return errorResult(e); } });
 
-// ---------------------------------------------------------------------------
 // Tool 18: get_v4_reserves
-// ---------------------------------------------------------------------------
-server.registerTool(
-  "get_v4_reserves",
-  {
-    description:
-      "Get Aave V4 reserve data including supply/borrow APYs, utilization, risk parameters, and caps. Comparable to get_aave_reserves but for V4 — includes V4-specific fields like supplyCap, borrowCap, and reserveFactor. No API key needed. Use get_aave_reserves for V2/V3 data.",
-    inputSchema: {
-      chainId: z.number().optional().describe("Filter by chain ID (e.g. 1 for Ethereum, 137 for Polygon, 42161 for Arbitrum). Omit for all chains."),
-    },
-  },
-  async ({ chainId }) => {
-    try {
-      const data = await getV4Reserves(chainId);
-      return textResult({ source: "aave-v4-api", chainId: chainId ?? "all", data });
-    } catch (error) {
-      return errorResult(error);
-    }
-  }
-);
+server.registerTool("get_v4_reserves", {
+  description: "Get Aave V4 reserves with supply/borrow APYs, risk params (collateral factor, caps), and status. Use get_aave_reserves for V2/V3. No API key needed.",
+  inputSchema: { chainId: z.number().optional().describe("Chain ID. Defaults to Ethereum.") },
+}, async ({ chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4Reserves(chainId) }); } catch (e) { return errorResult(e); } });
 
-// ---------------------------------------------------------------------------
-// Tool 19: get_v4_user_positions
-// ---------------------------------------------------------------------------
-server.registerTool(
-  "get_v4_user_positions",
-  {
-    description:
-      "Get a user's Aave V4 positions across all chains — health factor, total collateral, total debt, borrowing power, and per-asset supplies/borrows. This is the V4 equivalent of get_aave_user_position but works cross-chain automatically. No API key needed. Use get_aave_user_position for V2/V3 positions.",
-    inputSchema: {
-      userAddress: z.string().describe("User's EVM wallet address (0x...)"),
-    },
-  },
-  async ({ userAddress }) => {
-    try {
-      const data = await getV4UserPositions(userAddress);
-      return textResult({ source: "aave-v4-api", user: userAddress, data });
-    } catch (error) {
-      return errorResult(error);
-    }
-  }
-);
+// Tool 19: get_v4_chains
+server.registerTool("get_v4_chains", {
+  description: "List all chains supported by Aave V4 (mainnet and testnet). No API key needed.",
+  inputSchema: {},
+}, async () => { try { return textResult({ source: "aave-v4-api", data: await getV4Chains() }); } catch (e) { return errorResult(e); } });
 
-// ---------------------------------------------------------------------------
-// Tool 20: get_v4_user_supplies
-// ---------------------------------------------------------------------------
-server.registerTool(
-  "get_v4_user_supplies",
-  {
-    description:
-      "Get a user's Aave V4 supply positions with APY and collateral status. Optionally filter by chain. No API key needed.",
-    inputSchema: {
-      userAddress: z.string().describe("User's EVM wallet address (0x...)"),
-      chainId: z.number().optional().describe("Filter by chain ID (e.g. 1 for Ethereum). Omit for all chains."),
-    },
+// Tool 20: get_v4_exchange_rate
+server.registerTool("get_v4_exchange_rate", {
+  description: "Get exchange rate for any token via Aave V4's Chainlink oracle integration. Supports ERC-20 tokens, native tokens (ETH), and fiat currencies. No API key needed.",
+  inputSchema: {
+    tokenAddress: z.string().optional().describe("ERC-20 token address (e.g. WETH: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2)"),
+    chainId: z.number().default(1).describe("Chain ID for the token"),
+    native: z.boolean().optional().describe("Set true to get native token (ETH) price instead of ERC-20"),
+    to: z.string().default("USD").describe("Target currency: USD, EUR, or GBP"),
   },
-  async ({ userAddress, chainId }) => {
-    try {
-      const data = await getV4UserSupplies(userAddress, chainId);
-      return textResult({ source: "aave-v4-api", user: userAddress, chainId: chainId ?? "all", data });
-    } catch (error) {
-      return errorResult(error);
-    }
-  }
-);
+}, async ({ tokenAddress, chainId, native, to }) => {
+  try {
+    const from = native ? { type: "native" as const, chainId } : { type: "erc20" as const, chainId, address: tokenAddress! };
+    return textResult({ source: "aave-v4-api", data: await getV4ExchangeRate(from, to) });
+  } catch (e) { return errorResult(e); }
+});
 
-// ---------------------------------------------------------------------------
-// Tool 21: get_v4_user_borrows
-// ---------------------------------------------------------------------------
-server.registerTool(
-  "get_v4_user_borrows",
-  {
-    description:
-      "Get a user's Aave V4 borrow positions with APY, principal, interest, and total debt. Optionally filter by chain. No API key needed.",
-    inputSchema: {
-      userAddress: z.string().describe("User's EVM wallet address (0x...)"),
-      chainId: z.number().optional().describe("Filter by chain ID (e.g. 1 for Ethereum). Omit for all chains."),
-    },
+// Tool 21: get_v4_asset
+server.registerTool("get_v4_asset", {
+  description: "Get Aave V4 asset details: total supplied/borrowed across all hubs, average supply/borrow APY, and current price. No API key needed.",
+  inputSchema: {
+    tokenAddress: z.string().describe("ERC-20 token contract address"),
+    chainId: z.number().default(1).describe("Chain ID"),
   },
-  async ({ userAddress, chainId }) => {
-    try {
-      const data = await getV4UserBorrows(userAddress, chainId);
-      return textResult({ source: "aave-v4-api", user: userAddress, chainId: chainId ?? "all", data });
-    } catch (error) {
-      return errorResult(error);
-    }
-  }
-);
+}, async ({ tokenAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4Asset(tokenAddress, chainId) }); } catch (e) { return errorResult(e); } });
+
+// Tool 22: get_v4_asset_price_history
+server.registerTool("get_v4_asset_price_history", {
+  description: "Get historical price data for an Aave V4 asset. Powered by Chainlink oracles. No API key needed.",
+  inputSchema: {
+    tokenAddress: z.string().describe("ERC-20 token contract address"),
+    chainId: z.number().default(1).describe("Chain ID"),
+    window: z.enum(["LAST_DAY", "LAST_WEEK", "LAST_MONTH"]).default("LAST_WEEK").describe("Time window"),
+  },
+}, async ({ tokenAddress, chainId, window }) => { try { return textResult({ source: "aave-v4-api", data: await getV4AssetPriceHistory(tokenAddress, chainId, window) }); } catch (e) { return errorResult(e); } });
+
+// Tool 23: get_v4_protocol_history
+server.registerTool("get_v4_protocol_history", {
+  description: "Get Aave V4 protocol-wide historical data: total deposits and borrows over time in USD. No API key needed.",
+  inputSchema: {
+    window: z.enum(["LAST_DAY", "LAST_WEEK", "LAST_MONTH"]).default("LAST_WEEK").describe("Time window"),
+  },
+}, async ({ window }) => { try { return textResult({ source: "aave-v4-api", data: await getV4ProtocolHistory(window) }); } catch (e) { return errorResult(e); } });
+
+// Tool 24: get_v4_user_positions
+server.registerTool("get_v4_user_positions", {
+  description: "Get a user's Aave V4 positions across all spokes — health factor, collateral, debt, borrowing power, net APY. Cross-chain by default. No API key needed.",
+  inputSchema: { userAddress: z.string().describe("EVM wallet address (0x...)") },
+}, async ({ userAddress }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserPositions(userAddress) }); } catch (e) { return errorResult(e); } });
+
+// Tool 25: get_v4_user_summary
+server.registerTool("get_v4_user_summary", {
+  description: "Get aggregated Aave V4 portfolio summary for a user: total positions, net balance, collateral, debt, net APY, lowest health factor. No API key needed.",
+  inputSchema: { userAddress: z.string().describe("EVM wallet address (0x...)") },
+}, async ({ userAddress }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserSummary(userAddress) }); } catch (e) { return errorResult(e); } });
+
+// Tool 26: get_v4_user_supplies
+server.registerTool("get_v4_user_supplies", {
+  description: "Get a user's Aave V4 supply positions with principal, interest, and collateral status. No API key needed.",
+  inputSchema: {
+    userAddress: z.string().describe("EVM wallet address (0x...)"),
+    chainId: z.number().optional().describe("Filter by chain ID"),
+  },
+}, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserSupplies(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
+
+// Tool 27: get_v4_user_borrows
+server.registerTool("get_v4_user_borrows", {
+  description: "Get a user's Aave V4 borrow positions with principal, debt, interest. No API key needed.",
+  inputSchema: {
+    userAddress: z.string().describe("EVM wallet address (0x...)"),
+    chainId: z.number().optional().describe("Filter by chain ID"),
+  },
+}, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserBorrows(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
+
+// Tool 28: get_v4_user_balances
+server.registerTool("get_v4_user_balances", {
+  description: "Get a user's cross-chain token balances in Aave V4 with highest supply APY and lowest borrow APY per token. No API key needed.",
+  inputSchema: { userAddress: z.string().describe("EVM wallet address (0x...)") },
+}, async ({ userAddress }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserBalances(userAddress) }); } catch (e) { return errorResult(e); } });
+
+// Tool 29: get_v4_user_activities
+server.registerTool("get_v4_user_activities", {
+  description: "Get a user's Aave V4 transaction history: supplies, borrows, withdrawals, repayments, liquidations, swaps. No API key needed.",
+  inputSchema: {
+    userAddress: z.string().describe("EVM wallet address (0x...)"),
+    chainId: z.number().optional().describe("Filter by chain ID"),
+  },
+}, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserActivities(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
+
+// Tool 30: get_v4_claimable_rewards
+server.registerTool("get_v4_claimable_rewards", {
+  description: "Get a user's claimable Merkl and points rewards on Aave V4. No API key needed.",
+  inputSchema: {
+    userAddress: z.string().describe("EVM wallet address (0x...)"),
+    chainId: z.number().default(1).describe("Chain ID"),
+  },
+}, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4ClaimableRewards(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
+
+// Tool 31: get_v4_swap_quote
+server.registerTool("get_v4_swap_quote", {
+  description: "Get a read-only swap price quote from Aave V4 (powered by CoW Protocol with MEV protection). Returns pricing, fees, and slippage. No API key needed.",
+  inputSchema: {
+    sellTokenAddress: z.string().describe("Token to sell (ERC-20 address)"),
+    buyTokenAddress: z.string().describe("Token to buy (ERC-20 address)"),
+    sellAmount: z.string().describe("Amount to sell (human-readable, e.g. '100.5')"),
+    userAddress: z.string().describe("User's wallet address"),
+    chainId: z.number().default(1).describe("Chain ID"),
+  },
+}, async ({ sellTokenAddress, buyTokenAddress, sellAmount, userAddress, chainId }) => {
+  try {
+    return textResult({ source: "aave-v4-api", data: await getV4SwapQuote(
+      { chainId, address: sellTokenAddress }, { chainId, address: buyTokenAddress }, sellAmount, userAddress
+    ) });
+  } catch (e) { return errorResult(e); }
+});
 
 // ---------------------------------------------------------------------------
 // Prompt: aave_full_stack_analysis (combines V2/V3 subgraphs + V4 API)

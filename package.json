@@ -1,8 +1,8 @@
 {
   "name": "graph-aave-mcp",
-  "version": "2.0.2",
+  "version": "3.0.0",
   "mcpName": "io.github.PaulieB14/graph-aave-mcp",
-  "description": "MCP server for querying AAVE V2/V3/V4 lending protocol and governance data — 11 Graph subgraphs + Aave V4 API. 21 tools covering reserves, positions, liquidations, governance, V4 hubs/spokes, and cross-chain positions.",
+  "description": "MCP server for AAVE V2/V3/V4 — 32 tools across 11 Graph subgraphs + Aave V4 API. Reserves, positions, liquidations, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.",
   "type": "module",
   "bin": {
     "graph-aave-mcp": "build/index.js"
