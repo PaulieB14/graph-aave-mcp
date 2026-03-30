@@ -11,87 +11,33 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for querying [AAVE](https://aave.com/) V2/V3 lending protocol and governance data via [The Graph](https://thegraph.com/) subgraphs.**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 32 tools across 11 Graph subgraphs + the Aave V4 API.**
 
-Exposes 14 tools and 5 guided prompts that any AI agent (Claude, Cursor, Copilot, etc.) can use to query lending markets, user positions, health factors, liquidations, flash loans, rate history, and AAVE governance — across **7 chains** (Ethereum, Base, Arbitrum, Polygon, Optimism, Avalanche, Fantom) via **11 subgraphs** covering both V2 and V3 deployments plus AAVE Governance V3.
+Covers lending markets, user positions, health factors, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
 
 </div>
 
 > Published to the [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.PaulieB14/graph-aave-mcp) as `io.github.PaulieB14/graph-aave-mcp`
 
-## Supported Chains & Subgraphs
+## Two Data Sources
 
-7 chains, 11 subgraphs — some chains have both V2 (legacy) and V3 deployments tracked separately.
+| Source | Version | What it provides | Auth |
+|--------|---------|------------------|------|
+| **The Graph subgraphs** | V2/V3 | 11 subgraphs across 7 chains — reserves, positions, events, governance | `GRAPH_API_KEY` (free) |
+| **Aave V4 API** | V4 | Hubs, spokes, reserves, exchange rates, user positions, activities, swap quotes, rewards | None needed |
 
-| Chain | Version | Deployment ID |
-|-------|---------|---------------|
-| Ethereum | V3 | `QmX2VfvEspbShTdcjefWeG3CKBVXKWm9naxH6TVhqPb9qY` |
-| Ethereum | V2 | `QmdEuhCPTFx5q1Vf7jPQDVGQDpC34KYry82yb3NPc9sK6a` |
-| Base | V3 | `QmXZ53Kzz3L2LvvbGve2ebtLKWMhjjB1a3U2jnUj2YwGCW` |
-| Arbitrum | V3 | `Qmdn5hAZZj3wmWVuksXHtua3E6aWftCDeTFcW8YQ8Lu6pB` |
-| Polygon | V3 | `QmceoHP3ekxJ6JYqAXhqrVgv8rb9WXumrGe1ZhVZah8Ar5` |
-| Polygon | V2 | `QmNfojj4Wu1DErB9iC6epPZc4K2zQCrm4KJUra3DMQqSNm` |
-| Optimism | V3 | `QmScPH3aFxzFgrie8MMDU4QtFu3CE7nTfsRfSQXiccxBPh` |
-| Avalanche | V3 | `QmXhWmYZyEr8PGEic8F739wVqvMYxHLD7jke69RXmwQU95` |
-| Avalanche | V2 | `QmdDSA73QkFAvRZqtRoHgLvxonuSZTuJhoWkmBtEdVuTmz` |
-| **Ethereum** | **Governance V3** | `QmRyQo7xz4P3WvthdVzfkhwSzfwa8Uku1qrcyJCAN6RAWS` |
-| Fantom | V3 | `QmNTzi2eFS2boHFFY372xrxGHNM8yPjF26H3eUxWTtnvoA` |
-
-## Prerequisites
-
-You need a **free** Graph API key (takes ~2 minutes):
-
-1. Go to [The Graph Studio](https://thegraph.com/studio/)
-2. Connect your wallet (MetaMask, WalletConnect, etc.)
-3. Click **"API Keys"** in the sidebar and create one
-4. Free tier includes 100,000 queries/month
-
-## Installation
+## Quick Start
 
 ```bash
-npm install -g graph-aave-mcp
-```
-
-Or use directly with npx (no install needed):
-
-```bash
-GRAPH_API_KEY=your-key npx graph-aave-mcp
-```
-
-## Configuration
-
-### Claude Desktop
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "graph-aave": {
-      "command": "npx",
-      "args": ["-y", "graph-aave-mcp"],
-      "env": {
-        "GRAPH_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-### Claude Code (CLI)
-
-```bash
+# Claude Code
 claude mcp add graph-aave -- npx -y graph-aave-mcp
+
+# Set Graph API key for V2/V3 tools (V4 tools work without it)
+export GRAPH_API_KEY=your-key-here
 ```
 
-Then set the environment variable:
-```bash
-export GRAPH_API_KEY=your-api-key-here
-```
-
-### Cursor
-
-Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+<details>
+<summary>Claude Desktop / Cursor config</summary>
 
 ```json
 {
@@ -106,124 +52,154 @@ Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
   }
 }
 ```
+</details>
 
-### Other MCP Clients
+Free Graph API key: [thegraph.com/studio](https://thegraph.com/studio/) (100K queries/month free tier).
 
-Use stdio transport with `npx graph-aave-mcp` as the command and `GRAPH_API_KEY` as an environment variable.
+---
 
-## Available Tools
+## V2/V3 Tools (The Graph Subgraphs)
+
+15 tools + 1 raw query escape hatch. Requires `GRAPH_API_KEY`.
 
 ### Discovery
 
 | Tool | Description |
 |------|-------------|
-| `list_aave_chains` | List all supported AAVE chains with subgraph IDs, versions, and 30-day query volumes |
-| `get_aave_schema` | Full GraphQL schema introspection for any chain's subgraph |
+| `list_aave_chains` | All supported chains with subgraph IDs, versions, 30d query volumes |
+| `get_aave_schema` | Full GraphQL schema introspection for any chain |
 
 ### Lending Markets
 
 | Tool | Description |
 |------|-------------|
-| `get_aave_reserves` | All active lending markets on a chain — TVL, supply APY, borrow APY, LTV, liquidation thresholds |
-| `get_aave_reserve` | Deep detail on one asset: lifetime stats, full config, token addresses |
-| `get_reserve_rate_history` | Historical snapshots of APY, utilization rate, and TVL over time |
+| `get_aave_reserves` | All active markets — TVL, supply/borrow APY, LTV, liquidation thresholds |
+| `get_aave_reserve` | Deep detail on one asset: lifetime stats, config, token addresses |
+| `get_reserve_rate_history` | Historical APY, utilization, TVL snapshots |
 
 ### User Positions
 
 | Tool | Description |
 |------|-------------|
-| `get_aave_user_position` | Wallet's supplied assets, borrowed assets, collateral flags, and e-mode category |
-| `simulate_health_factor` | Simulate how a price change affects a user's health factor — e.g. "ETH drops 20%" |
+| `get_aave_user_position` | Wallet's supplied/borrowed assets, collateral flags, e-mode |
+| `simulate_health_factor` | Simulate price changes on a user's health factor |
 
 ### Protocol Events
 
 | Tool | Description |
 |------|-------------|
-| `get_recent_borrows` | Recent borrow events — filterable by user address or asset symbol |
-| `get_recent_supplies` | Recent supply/deposit events (handles V2 `deposit` vs V3 `supply` automatically) |
-| `get_aave_liquidations` | Recent liquidations — filterable by liquidated user or liquidator address |
-| `get_aave_flash_loans` | Recent flash loans with amounts and fees paid |
+| `get_recent_borrows` | Recent borrows — filter by user or asset |
+| `get_recent_supplies` | Recent supplies/deposits (auto-handles V2 vs V3 schema) |
+| `get_aave_repays` | Recent repayments |
+| `get_aave_liquidations` | Recent liquidations — filter by user or liquidator |
+| `get_aave_flash_loans` | Recent flash loans with fees |
 
 ### Governance
 
 | Tool | Description |
 |------|-------------|
-| `get_governance_proposals` | AAVE Governance V3 proposals with titles, states, for/against vote counts |
-| `get_proposal_votes` | Individual voter breakdown for a specific proposal by voting power |
+| `get_governance_proposals` | Proposals with titles, states, vote counts |
+| `get_proposal_votes` | Per-voter breakdown by voting power |
 
 ### Advanced
 
 | Tool | Description |
 |------|-------------|
-| `query_aave_subgraph` | Raw GraphQL escape hatch — execute any query against any chain |
+| `query_aave_subgraph` | Raw GraphQL — execute any query against any chain |
+
+### Supported Chains (V2/V3)
+
+| Chain | Version | 30d Queries |
+|-------|---------|-------------|
+| Ethereum | V3 | 21.6M |
+| Base | V3 | 5.6M |
+| Arbitrum | V3 | 5.6M |
+| Polygon | V3 | 2.0M |
+| Optimism | V3 | 1.8M |
+| Avalanche | V3 | 1.2M |
+| Ethereum | V2 | 701K |
+| Polygon | V2 | 216K |
+| Avalanche | V2 | 133K |
+| Fantom | V3 (Messari) | 13K |
+| Ethereum | Governance V3 | 486K |
+
+---
+
+## V4 Tools (Aave API)
+
+16 tools powered by `api.aave.com/graphql`. **No API key needed.**
+
+### Liquidity Model
+
+| Tool | Description |
+|------|-------------|
+| `get_v4_hubs` | Liquidity hubs (Core, Plus, Prime) with TVL and utilization |
+| `get_v4_spokes` | Cross-chain spokes (Main, Bluechip, Kelp, Lido, Ethena, EtherFi, Forex, Gold, Lombard) |
+| `get_v4_reserves` | Per-spoke reserves with supply/borrow APYs, risk params, caps |
+| `get_v4_chains` | Supported V4 chains |
+| `get_v4_asset` | Cross-hub asset summary with average APYs and price |
+| `get_v4_exchange_rate` | Any token price via Chainlink oracles (ERC-20, native, or fiat) |
+| `get_v4_asset_price_history` | Historical token prices |
+| `get_v4_protocol_history` | Total deposits/borrows over time |
+
+### User Data
+
+| Tool | Description |
+|------|-------------|
+| `get_v4_user_positions` | Cross-chain positions — health factor, collateral, debt, borrowing power |
+| `get_v4_user_summary` | Aggregated portfolio: total positions, net balance, net APY |
+| `get_v4_user_supplies` | Supply positions with principal and interest |
+| `get_v4_user_borrows` | Borrow positions with debt breakdown |
+| `get_v4_user_balances` | Cross-chain token holdings with best APYs per token |
+| `get_v4_user_activities` | Transaction history: supplies, borrows, repays, liquidations, swaps |
+| `get_v4_claimable_rewards` | Claimable Merkl and points rewards |
+| `get_v4_swap_quote` | Read-only swap pricing via CoW Protocol (MEV-protected) |
+
+### V4 Architecture
+
+```
+Hubs (Core, Plus, Prime)
+  └── Assets (WETH, USDC, GHO, cbBTC, etc.)
+       └── Spokes (Main, Bluechip, Kelp, Lido, Ethena, ...)
+            └── Reserves (per-spoke lending markets)
+                 └── User Positions (health factor, collateral, debt)
+```
+
+V4 enables cross-chain lending: supply on one spoke, borrow on another. Hubs aggregate liquidity across spokes.
+
+---
 
 ## Guided Prompts
 
-Prompts are pre-built multi-step workflows that guide any AI agent through common AAVE analysis tasks:
+6 pre-built workflows that guide agents through multi-step analysis:
 
 | Prompt | Description |
 |--------|-------------|
-| `analyze_aave_user` | Full wallet analysis: supplied/borrowed assets, health factor, liquidation risk |
-| `aave_chain_overview` | Protocol overview for a chain: top markets, rates, recent activity |
-| `compare_aave_rates` | Compare supply/borrow APY for one asset across all supported chains |
-| `aave_liquidation_analysis` | Analyze liquidation patterns, top liquidators, and at-risk markets |
-| `aave_governance_overview` | Recent governance proposals, voting results, and active decisions |
+| `analyze_aave_user` | Full wallet analysis: positions, health factor, liquidation risk |
+| `aave_chain_overview` | Protocol overview: top markets, rates, recent activity |
+| `compare_aave_rates` | Compare APY for one asset across all chains |
+| `aave_liquidation_analysis` | Liquidation patterns, top liquidators, at-risk markets |
+| `aave_governance_overview` | Recent proposals, voting results, active decisions |
+| `aave_full_stack_analysis` | Cross-version comparison: V2 vs V3 vs V4 rates and positions |
 
-## Rate Conversion
+---
 
-AAVE stores interest rates in **RAY units** (27 decimal precision). To convert to human-readable APY:
+## Example Questions
 
-```
-Supply APY %  = liquidityRate    / 1e27 * 100
-Borrow APY %  = variableBorrowRate / 1e27 * 100
-```
+**V4 (new):**
+- *"What are the Aave V4 hubs and their utilization?"*
+- *"Show me V4 reserves with the highest supply APY"*
+- *"What's the current ETH price on Aave V4?"*
+- *"Compare V3 vs V4 USDC supply rates"*
+- *"What spokes does Aave V4 have on Ethereum?"*
 
-Token amounts are stored in **native token units**. To convert:
-```
-Human amount = rawAmount / 10^decimals
-```
-
-## Health Factor
-
-A user's health factor determines liquidation risk:
-
-```
-HF = Σ(collateral_i × price_i × liquidationThreshold_i) / Σ(debt_i × price_i)
-```
-
-- **HF > 1.0** — position is safe
-- **HF = 1.0** — liquidation threshold reached
-- **HF < 1.0** — position is liquidatable
-
-Use `simulate_health_factor` to test how price movements affect a specific wallet's HF.
-
-## Example Prompts for AI Agents
-
-Once connected, an AI agent can answer questions like:
-
-**Markets & Rates**
+**V2/V3:**
 - *"What are the top AAVE markets on Ethereum by TVL?"*
-- *"What is the current USDC supply APY on Base?"*
-- *"Compare WETH borrow rates across all AAVE V3 chains"*
-- *"Which chain has the cheapest stablecoin borrowing right now?"*
-
-**User Positions**
+- *"Compare WETH borrow rates across all V3 chains"*
 - *"Analyze the AAVE position for wallet 0x..."*
-- *"What is the health factor for address 0x... on Arbitrum?"*
-- *"Show me what 0x... has supplied and borrowed on Polygon"*
 - *"If ETH drops 30%, will address 0x... get liquidated?"*
-
-**Protocol Activity**
-- *"Show me the last 20 liquidations on Ethereum AAVE"*
-- *"Who are the most active liquidators on Arbitrum this week?"*
-- *"What are the biggest flash loans on Base recently?"*
-- *"Show me recent USDC borrows on Optimism"*
-
-**Governance**
-- *"What are the latest AAVE governance proposals?"*
-- *"Is there anything currently up for a vote in AAVE governance?"*
-- *"Show me who voted on proposal #185 and how"*
-- *"What governance proposals have passed recently?"*
+- *"Show me the last 20 liquidations on Ethereum"*
+- *"What AAVE governance proposals are active?"*
 
 ## Development
 
@@ -234,31 +210,6 @@ npm install
 npm run build
 GRAPH_API_KEY=your-key node build/index.js
 ```
-
-To test with a specific chain:
-```bash
-# Start the server and query it with a GraphQL client or MCP inspector
-GRAPH_API_KEY=your-key npx @modelcontextprotocol/inspector node build/index.js
-```
-
-## Schema Notes
-
-**Lending subgraphs (V3)** use AAVE-native schema:
-- `reserves` — individual asset markets
-- `userReserves` — user positions per asset
-- `borrows`, `supplies`, `repays` — transaction events
-- `liquidationCalls` — liquidation events
-- `flashLoans` — flash loan events
-- `reserveParamsHistoryItems` — historical rate snapshots
-
-**Lending subgraphs (V2)** use the same schema but with `deposits` instead of `supplies`.
-
-**Governance subgraph** uses a separate schema:
-- `proposals` — governance proposals with votes and payloads
-- `proposalVotes_collection` — individual voter records
-- `proposalMetadata_collection` — proposal titles and content
-- `payloads` — on-chain execution payloads
-- `votingPortals`, `votingConfigs` — governance configuration
 
 ## License
 
