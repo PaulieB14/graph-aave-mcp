@@ -58,6 +58,10 @@ Or use directly with npx (no install needed):
 GRAPH_API_KEY=your-key npx graph-aave-mcp
 ```
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/paulieb14-graph-aave-mcp).
+
 ## Configuration
 
 ### Claude Desktop
