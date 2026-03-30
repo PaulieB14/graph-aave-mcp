@@ -1,14 +1,7 @@
 // Aave V4 API client — lightweight wrapper around the AaveKit GraphQL API
-// Complements the existing Graph subgraph tools with V4-specific data:
-// hubs, spokes, cross-chain positions, and V4 reserves.
-//
-// STATUS: Aave V4 is not yet live. These tools will return a "not yet available"
-// message until the API is reachable. Once V4 launches, they work automatically
-// with no code changes needed.
-//
+// V4 uses Aave's own hosted API (not The Graph subgraphs).
 // When V4 subgraphs become available on The Graph, these queries can be
-// migrated to subgraphs by adding entries to subgraphs.ts and swapping
-// the fetch target from api.aave.com to the Graph gateway.
+// migrated to subgraphs by adding entries to subgraphs.ts.
 
 const AAVE_API = process.env.AAVE_V4_API_URL || "https://api.aave.com/graphql";
 
@@ -43,8 +36,7 @@ async function gql<T>(query: string, variables?: Record<string, unknown>): Promi
     clearTimeout(timeout);
   } catch (err) {
     throw new AaveV4ApiError(
-      "Aave V4 is not yet live — the API at api.aave.com is not reachable. " +
-      "These tools will work automatically once V4 launches. " +
+      "Aave V4 API at api.aave.com is not reachable. " +
       "For current Aave data, use the V2/V3 subgraph tools (get_aave_reserves, get_aave_user_position, etc.).",
       undefined,
       AAVE_API
@@ -52,14 +44,6 @@ async function gql<T>(query: string, variables?: Record<string, unknown>): Promi
   }
 
   if (!response.ok) {
-    if (response.status === 404 || response.status === 503) {
-      throw new AaveV4ApiError(
-        "Aave V4 API is not yet available (HTTP " + response.status + "). " +
-        "V4 is coming soon. For current data, use V2/V3 subgraph tools.",
-        response.status,
-        AAVE_API
-      );
-    }
     throw new AaveV4ApiError(
       `Aave V4 API returned HTTP ${response.status}: ${response.statusText}`,
       response.status,
@@ -82,79 +66,60 @@ async function gql<T>(query: string, variables?: Record<string, unknown>): Promi
 }
 
 // ---------------------------------------------------------------------------
-// Hubs — V4 liquidity hubs
+// Hubs — V4 liquidity hubs (Core, Plus, Prime)
 // ---------------------------------------------------------------------------
 
-export async function getV4Hubs(): Promise<unknown> {
-  return gql(`
-    query Hubs {
-      hubs {
-        id
-        name
-        chain { id name }
-        deposits { amount currency }
-        borrows { amount currency }
-        availableLiquidity { amount currency }
-        utilizationRate
-      }
+export async function getV4Hubs(chainId?: number): Promise<unknown> {
+  const filter = chainId ? `chainIds: [${chainId}]` : `chainIds: [1]`;
+  return gql(`{
+    hubs(request: { query: { ${filter} } }) {
+      name
+      chain { name chainId }
     }
-  `);
+  }`);
 }
 
 // ---------------------------------------------------------------------------
-// Spokes — V4 cross-chain spokes
+// Spokes — V4 cross-chain spokes (Kelp, Lido, Main, Bluechip, etc.)
 // ---------------------------------------------------------------------------
 
-export async function getV4Spokes(): Promise<unknown> {
-  return gql(`
-    query Spokes {
-      spokes {
-        id
-        name
-        chain { id name }
-        hub { id name }
-        reserves { id }
-      }
+export async function getV4Spokes(chainId?: number): Promise<unknown> {
+  const filter = chainId ? `chainIds: [${chainId}]` : `chainIds: [1]`;
+  return gql(`{
+    spokes(request: { query: { ${filter} } }) {
+      name
+      chain { name chainId }
     }
-  `);
+  }`);
 }
 
 // ---------------------------------------------------------------------------
-// Reserves — V4 reserve data
+// Reserves — V4 reserve data with APYs and risk params
 // ---------------------------------------------------------------------------
 
 export async function getV4Reserves(chainId?: number): Promise<unknown> {
-  const filter = chainId ? `, chainId: ${chainId}` : "";
-  return gql(`
-    query Reserves {
-      reserves(request: { first: 50${filter} }) {
-        id
-        onChainId
-        chain { id name }
-        asset { symbol name decimals }
-        summary {
-          totalSupplied { amount currency }
-          totalBorrowed { amount currency }
-          availableLiquidity { amount currency }
-          supplyApy
-          borrowApy
-          utilizationRate
+  const filter = chainId ? `chainIds: [${chainId}]` : `chainIds: [1]`;
+  return gql(`{
+    reserves(request: { query: { ${filter} } }) {
+      asset {
+        underlying {
+          address
+          chain { name chainId }
+          info { name symbol decimals }
         }
-        settings {
-          ltv
-          liquidationThreshold
-          liquidationBonus
-          supplyCap { amount currency }
-          borrowCap { amount currency }
-          reserveFactor
-        }
-        status { isFrozen isPaused isActive }
-        canBorrow
-        canSupply
-        canUseAsCollateral
       }
+      spoke { name }
+      chain { name chainId }
+      summary {
+        supplyApy { value }
+        borrowApy { value }
+      }
+      status { frozen paused active }
+      canBorrow
+      canSupply
+      canUseAsCollateral
     }
-  `);
+  }`);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,30 +127,17 @@ export async function getV4Reserves(chainId?: number): Promise<unknown> {
 // ---------------------------------------------------------------------------
 
 export async function getV4UserPositions(userAddress: string): Promise<unknown> {
-  return gql(
-    `
-    query UserPositions($request: UserPositionsRequest!) {
-      userPositions(request: $request) {
-        spoke { id name chain { id name } }
-        healthFactor
-        totalCollateral { amount currency }
-        totalDebt { amount currency }
-        borrowingPower { amount currency }
-        supplies {
-          reserve { asset { symbol name } }
-          principal { amount currency }
-          isCollateral
-        }
-        borrows {
-          reserve { asset { symbol name } }
-          principal { amount currency }
-          interest { amount currency }
-        }
+  return gql(`
+    query ($request: UserPositionsRequest!, $currency: Currency!) {
+      userPositions(request: $request, currency: $currency) {
+        spoke { name chain { name chainId } }
+        healthFactor { value }
+        totalCollateral { value }
+        totalDebt { value }
+        borrowingPower { value }
       }
     }
-  `,
-    { request: { user: userAddress } }
-  );
+  `, { request: { user: userAddress }, currency: "USD" });
 }
 
 // ---------------------------------------------------------------------------
@@ -194,21 +146,19 @@ export async function getV4UserPositions(userAddress: string): Promise<unknown> 
 
 export async function getV4UserSupplies(userAddress: string, chainId?: number): Promise<unknown> {
   const request: Record<string, unknown> = { user: userAddress };
-  if (chainId) request.chainId = chainId;
-  return gql(
-    `
-    query UserSupplies($request: UserSuppliesRequest!) {
-      userSupplies(request: $request) {
-        reserve { asset { symbol name } chain { name } }
-        principal { amount currency }
-        interest { amount currency }
+  if (chainId) request.chains = { chainIds: [chainId] };
+  return gql(`
+    query ($request: UserSuppliesRequest!, $currency: Currency!) {
+      userSupplies(request: $request, currency: $currency) {
+        reserve {
+          asset { underlying { info { symbol name } } }
+          chain { name }
+          spoke { name }
+        }
         isCollateral
-        supplyApy
       }
     }
-  `,
-    { request }
-  );
+  `, { request, currency: "USD" });
 }
 
 // ---------------------------------------------------------------------------
@@ -217,19 +167,16 @@ export async function getV4UserSupplies(userAddress: string, chainId?: number): 
 
 export async function getV4UserBorrows(userAddress: string, chainId?: number): Promise<unknown> {
   const request: Record<string, unknown> = { user: userAddress };
-  if (chainId) request.chainId = chainId;
-  return gql(
-    `
-    query UserBorrows($request: UserBorrowsRequest!) {
-      userBorrows(request: $request) {
-        reserve { asset { symbol name } chain { name } }
-        principal { amount currency }
-        interest { amount currency }
-        debt { amount currency }
-        borrowApy
+  if (chainId) request.chains = { chainIds: [chainId] };
+  return gql(`
+    query ($request: UserBorrowsRequest!, $currency: Currency!) {
+      userBorrows(request: $request, currency: $currency) {
+        reserve {
+          asset { underlying { info { symbol name } } }
+          chain { name }
+          spoke { name }
+        }
       }
     }
-  `,
-    { request }
-  );
+  `, { request, currency: "USD" });
 }
