@@ -1,6 +1,6 @@
 {
   "name": "graph-aave-mcp",
-  "version": "4.0.5",
+  "version": "4.0.6",
   "mcpName": "io.github.PaulieB14/graph-aave-mcp",
   "description": "MCP server for AAVE V2/V3/V4 — 40 tools across 16 Graph subgraphs + Aave V4 API. Reserves, positions, cross-chain liquidation risk monitoring, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.",
   "type": "module",
