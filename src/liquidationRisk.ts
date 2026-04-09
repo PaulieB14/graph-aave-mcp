@@ -63,9 +63,10 @@ export async function getAtRiskPositions(
   riskLevel?: string,
   first = 25
 ): Promise<unknown> {
-  const where = riskLevel
-    ? `where: { riskLevel: "${riskLevel}" }, `
-    : `where: { riskLevel_not: "safe" }, `;
+  const level = riskLevel?.toUpperCase();
+  const where = level
+    ? `where: { riskLevel: "${level}" }, `
+    : `where: { riskLevel_not: "SAFE" }, `;
   const query = `{
     positions(${where}first: ${first}, orderBy: riskScore, orderDirection: desc) {
       id
@@ -112,7 +113,7 @@ export async function getUserRiskPositions(
 /** Protocol-wide risk stats (total/danger/warning/critical counts) */
 export async function getProtocolRiskStats(chain: string): Promise<unknown> {
   const query = `{
-    protocolStats(first: 10) {
+    protocolStats_collection(first: 10) {
       id
       protocol
       network
@@ -212,7 +213,7 @@ export async function getCrossChainRiskSummary(): Promise<unknown> {
   const results = await Promise.allSettled(
     RISK_CHAIN_NAMES.map(async (chain) => {
       const stats = (await getProtocolRiskStats(chain)) as {
-        protocolStats?: Array<{
+        protocolStats_collection?: Array<{
           network: string;
           totalPositions: string;
           dangerPositions: string;
@@ -227,7 +228,7 @@ export async function getCrossChainRiskSummary(): Promise<unknown> {
         network: cfg.chain,
         subgraphId: cfg.subgraphId,
         queries30d: cfg.queries30d,
-        stats: stats?.protocolStats ?? [],
+        stats: stats?.protocolStats_collection ?? [],
       };
     })
   );
