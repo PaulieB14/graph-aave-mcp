@@ -11,19 +11,20 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 32 tools across 11 Graph subgraphs + the Aave V4 API.**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 40 tools across 16 Graph subgraphs + the Aave V4 API.**
 
-Covers lending markets, user positions, health factors, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
+Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
 
 </div>
 
 > Published to the [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.PaulieB14/graph-aave-mcp) as `io.github.PaulieB14/graph-aave-mcp`
 
-## Two Data Sources
+## Three Data Sources
 
 | Source | Version | What it provides | Auth |
 |--------|---------|------------------|------|
 | **The Graph subgraphs** | V2/V3 | 11 subgraphs across 7 chains — reserves, positions, events, governance | `GRAPH_API_KEY` (free) |
+| **Liquidation Risk subgraphs** | V3 | 5 chains — real-time health factors, risk scores, risk alerts, protocol risk stats | `GRAPH_API_KEY` (free) |
 | **Aave V4 API** | V4 | Hubs, spokes, reserves, exchange rates, user positions, activities, swap quotes, rewards | None needed |
 
 ## Quick Start
@@ -32,7 +33,7 @@ Covers lending markets, user positions, health factors, liquidations, flash loan
 # Claude Code
 claude mcp add graph-aave -- npx -y graph-aave-mcp
 
-# Set Graph API key for V2/V3 tools (V4 tools work without it)
+# Set Graph API key for subgraph tools (V4 tools work without it)
 export GRAPH_API_KEY=your-key-here
 ```
 
@@ -127,6 +128,47 @@ Free Graph API key: [thegraph.com/studio](https://thegraph.com/studio/) (100K qu
 
 ---
 
+## Liquidation Risk Tools (NEW)
+
+8 tools powered by dedicated risk subgraphs across 5 chains. Requires `GRAPH_API_KEY`.
+
+Real-time liquidation risk monitoring with health factors, risk scores (0–100), risk level classifications (safe/warning/danger/critical), and cross-chain risk summaries.
+
+### Risk Monitoring
+
+| Tool | Description |
+|------|-------------|
+| `get_at_risk_positions` | Positions at risk of liquidation — filter by risk level, sorted by risk score |
+| `get_user_risk_profile` | Full risk profile for a wallet — all positions with health factors and risk scores |
+| `get_protocol_risk_stats` | Aggregate stats: total positions, danger/warning/critical counts |
+| `get_cross_chain_risk_summary` | Risk overview across all 5 chains in one call |
+
+### Risk Events
+
+| Tool | Description |
+|------|-------------|
+| `get_risk_alerts` | Risk level transitions — when positions move between safe/warning/danger/critical |
+| `get_risk_liquidations` | Liquidation events with collateral/debt assets, amounts, and tx hashes |
+| `get_health_factor_history` | Health factor trend over time for a specific wallet |
+
+### Discovery
+
+| Tool | Description |
+|------|-------------|
+| `list_risk_chains` | Available liquidation risk chains with subgraph IDs and query volumes |
+
+### Supported Chains (Liquidation Risk)
+
+| Chain | 30d Queries | Signal |
+|-------|-------------|--------|
+| Ethereum | 21.1K | 20.2K GRT |
+| Arbitrum | 19.3K | 35.7K GRT |
+| Base | 16.2K | 15.2K GRT |
+| Polygon | 13.2K | — |
+| Optimism | 13.0K | — |
+
+---
+
 ## V4 Tools (Aave API)
 
 16 tools powered by `api.aave.com/graphql`. **No API key needed.**
@@ -173,7 +215,7 @@ V4 enables cross-chain lending: supply on one spoke, borrow on another. Hubs agg
 
 ## Guided Prompts
 
-6 pre-built workflows that guide agents through multi-step analysis:
+7 pre-built workflows that guide agents through multi-step analysis:
 
 | Prompt | Description |
 |--------|-------------|
@@ -183,12 +225,20 @@ V4 enables cross-chain lending: supply on one spoke, borrow on another. Hubs agg
 | `aave_liquidation_analysis` | Liquidation patterns, top liquidators, at-risk markets |
 | `aave_governance_overview` | Recent proposals, voting results, active decisions |
 | `aave_full_stack_analysis` | Cross-version comparison: V2 vs V3 vs V4 rates and positions |
+| `cross_chain_risk_monitor` | **NEW** — Cross-chain liquidation risk: riskiest positions, alerts, protocol health |
 
 ---
 
 ## Example Questions
 
-**V4 (new):**
+**Liquidation Risk (new):**
+- *"Which Aave positions on Arbitrum are closest to liquidation?"*
+- *"Give me a cross-chain risk dashboard — which network has the most at-risk positions?"*
+- *"Is wallet 0x... at risk of liquidation on any chain?"*
+- *"Show me recent risk alerts — which positions just became critical?"*
+- *"How has this wallet's health factor changed over time on Base?"*
+
+**V4:**
 - *"What are the Aave V4 hubs and their utilization?"*
 - *"Show me V4 reserves with the highest supply APY"*
 - *"What's the current ETH price on Aave V4?"*

@@ -6,6 +6,17 @@ import { z } from "zod";
 import { queryChain } from "./graphClient.js";
 import { CHAINS, CHAIN_NAMES, LENDING_CHAIN_NAMES } from "./subgraphs.js";
 import {
+  LIQUIDATION_RISK_CHAINS,
+  RISK_CHAIN_NAMES,
+  getAtRiskPositions,
+  getUserRiskPositions,
+  getProtocolRiskStats,
+  getRiskAlerts,
+  getRiskLiquidations,
+  getHealthFactorHistory,
+  getCrossChainRiskSummary,
+} from "./liquidationRisk.js";
+import {
   getV4Hubs,
   getV4Spokes,
   getV4Reserves,
@@ -1594,6 +1605,249 @@ server.registerTool(
   }
 );
 
+// ===========================================================================
+// LIQUIDATION RISK TOOLS — 5 chains via dedicated risk subgraphs
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Tool 15 — get_at_risk_positions
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_at_risk_positions",
+  {
+    description:
+      "Find Aave positions at risk of liquidation across 5 chains. " +
+      "Returns positions with health factor, risk score (0–100), risk level " +
+      "(critical/danger/warning), collateral, and debt amounts. " +
+      "Use when asked: 'Which positions are close to liquidation on Arbitrum?', " +
+      "'Show me the riskiest Aave positions on Base', 'How many critical positions are there?'",
+    inputSchema: {
+      chain: z.enum(RISK_CHAIN_NAMES).describe(
+        "Liquidation risk chain: risk-ethereum, risk-arbitrum, risk-base, risk-polygon, risk-optimism"
+      ),
+      riskLevel: z
+        .enum(["critical", "danger", "warning"])
+        .optional()
+        .describe("Filter by risk level (omit to get all non-safe positions)"),
+      first: z
+        .number()
+        .min(1)
+        .max(100)
+        .default(25)
+        .describe("Number of positions to return (default 25), sorted by riskScore desc"),
+    },
+  },
+  async ({ chain, riskLevel, first }) => {
+    try {
+      const data = await getAtRiskPositions(chain, riskLevel, first);
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 16 — get_user_risk_profile
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_user_risk_profile",
+  {
+    description:
+      "Get a user's full liquidation risk profile on a specific chain — " +
+      "all their positions with health factors, risk scores, collateral, and debt. " +
+      "Use when asked: 'Is wallet 0x... at risk of liquidation?', " +
+      "'What's the health factor for this address on Base?', " +
+      "'Show me this user's risk across all their Aave positions'.",
+    inputSchema: {
+      chain: z.enum(RISK_CHAIN_NAMES).describe(
+        "Liquidation risk chain: risk-ethereum, risk-arbitrum, risk-base, risk-polygon, risk-optimism"
+      ),
+      userAddress: z.string().describe("Wallet address (0x...)"),
+    },
+  },
+  async ({ chain, userAddress }) => {
+    try {
+      const data = await getUserRiskPositions(chain, userAddress);
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 17 — get_protocol_risk_stats
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_protocol_risk_stats",
+  {
+    description:
+      "Get aggregate risk statistics for Aave on a chain — total positions, " +
+      "and how many are in danger, warning, or critical state. " +
+      "Use when asked: 'How healthy is Aave on Ethereum right now?', " +
+      "'How many positions are at risk on Arbitrum?', " +
+      "'Give me a risk overview of the protocol'.",
+    inputSchema: {
+      chain: z.enum(RISK_CHAIN_NAMES).describe(
+        "Liquidation risk chain: risk-ethereum, risk-arbitrum, risk-base, risk-polygon, risk-optimism"
+      ),
+    },
+  },
+  async ({ chain }) => {
+    try {
+      const data = await getProtocolRiskStats(chain);
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 18 — get_risk_alerts
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_risk_alerts",
+  {
+    description:
+      "Get recent risk level transitions — when positions moved between " +
+      "safe/warning/danger/critical states. Shows previous and new risk level, " +
+      "health factor at transition, and timestamp. " +
+      "Use when asked: 'Which positions recently became at risk?', " +
+      "'Show me health factor drops on Polygon', " +
+      "'Has wallet 0x... had any risk alerts?'.",
+    inputSchema: {
+      chain: z.enum(RISK_CHAIN_NAMES).describe(
+        "Liquidation risk chain: risk-ethereum, risk-arbitrum, risk-base, risk-polygon, risk-optimism"
+      ),
+      first: z.number().min(1).max(100).default(25).describe("Number of alerts (default 25)"),
+      userAddress: z.string().optional().describe("Optional: filter by wallet address"),
+    },
+  },
+  async ({ chain, first, userAddress }) => {
+    try {
+      const data = await getRiskAlerts(chain, first, userAddress);
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 19 — get_risk_liquidations
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_risk_liquidations",
+  {
+    description:
+      "Get liquidation events from the risk subgraph — includes collateral asset, " +
+      "debt asset, amounts, liquidator, and transaction hash. " +
+      "Complements get_aave_liquidations with risk-specific context. " +
+      "Use when asked: 'Show recent liquidations on Base', " +
+      "'Was this wallet liquidated?', 'What collateral was seized?'.",
+    inputSchema: {
+      chain: z.enum(RISK_CHAIN_NAMES).describe(
+        "Liquidation risk chain: risk-ethereum, risk-arbitrum, risk-base, risk-polygon, risk-optimism"
+      ),
+      first: z.number().min(1).max(100).default(25).describe("Number of events (default 25)"),
+      userAddress: z.string().optional().describe("Optional: filter by liquidated user"),
+    },
+  },
+  async ({ chain, first, userAddress }) => {
+    try {
+      const data = await getRiskLiquidations(chain, first, userAddress);
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 20 — get_health_factor_history
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_health_factor_history",
+  {
+    description:
+      "Get a user's health factor history over time — shows how their risk " +
+      "has changed block by block. Useful for trend analysis and understanding " +
+      "if a position is deteriorating. " +
+      "Use when asked: 'How has this wallet's health factor changed?', " +
+      "'Is this position getting riskier over time?', " +
+      "'Show me the health factor trend for 0x...'.",
+    inputSchema: {
+      chain: z.enum(RISK_CHAIN_NAMES).describe(
+        "Liquidation risk chain: risk-ethereum, risk-arbitrum, risk-base, risk-polygon, risk-optimism"
+      ),
+      userAddress: z.string().describe("Wallet address (0x...)"),
+      first: z.number().min(1).max(200).default(50).describe("Number of snapshots (default 50)"),
+    },
+  },
+  async ({ chain, userAddress, first }) => {
+    try {
+      const data = await getHealthFactorHistory(chain, userAddress, first);
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 21 — get_cross_chain_risk_summary
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_cross_chain_risk_summary",
+  {
+    description:
+      "Get a cross-chain risk overview across all 5 chains (Ethereum, Arbitrum, " +
+      "Base, Polygon, Optimism) in a single call. Returns protocol-level risk stats " +
+      "for each chain: total positions, danger/warning/critical counts. " +
+      "Use when asked: 'Which chain has the most at-risk positions?', " +
+      "'Give me a risk dashboard across all chains', " +
+      "'Compare Aave risk levels across networks'.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const data = await getCrossChainRiskSummary();
+      return textResult(data);
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool 22 — list_risk_chains
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "list_risk_chains",
+  {
+    description:
+      "List all available liquidation risk subgraph chains with their " +
+      "names, networks, subgraph IDs, and 30-day query volumes. " +
+      "Use when asked: 'Which chains have liquidation risk data?', " +
+      "'What risk subgraphs are available?'.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return textResult(
+        Object.entries(LIQUIDATION_RISK_CHAINS).map(([key, cfg]) => ({
+          chainKey: key,
+          ...cfg,
+        }))
+      );
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Prompts — multi-step guided workflows for any AI agent
 // ---------------------------------------------------------------------------
@@ -1901,6 +2155,41 @@ server.registerTool("get_v4_swap_quote", {
     ) });
   } catch (e) { return errorResult(e); }
 });
+
+// ---------------------------------------------------------------------------
+// Prompt: cross_chain_risk_monitor
+// ---------------------------------------------------------------------------
+server.registerPrompt(
+  "cross_chain_risk_monitor",
+  {
+    description:
+      "Monitor Aave liquidation risk across all 5 chains — identify the riskiest " +
+      "positions, recent risk alerts, and protocol health per network",
+    argsSchema: {
+      userAddress: z.string().optional().describe("Optional: focus on a specific wallet's risk across chains"),
+    },
+  },
+  ({ userAddress }) => ({
+    messages: [
+      {
+        role: "user" as const,
+        content: {
+          type: "text" as const,
+          text: `Perform a cross-chain Aave liquidation risk analysis:
+1. Call get_cross_chain_risk_summary to get protocol-level stats across all 5 chains
+2. Identify which chain has the most critical/danger positions
+3. On the riskiest chain, call get_at_risk_positions(riskLevel="critical") to see the worst positions
+4. Call get_risk_alerts on that chain to see recent health factor transitions
+${userAddress ? `5. For wallet ${userAddress}:
+   - Call get_user_risk_profile on each chain to check their positions
+   - Call get_health_factor_history on chains where they have positions
+   - Assess: is this wallet at risk? Is their health factor trending down?` : ""}
+Summarize: total at-risk positions per chain, the most critical positions, recent risk movements, ${userAddress ? "and this wallet's risk profile" : "and recommended monitoring priorities"}.`,
+        },
+      },
+    ],
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Prompt: aave_full_stack_analysis (combines V2/V3 subgraphs + V4 API)
