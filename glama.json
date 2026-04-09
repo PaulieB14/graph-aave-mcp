@@ -1,4 +1,16 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "maintainers": ["PaulieB14"]
+  "maintainers": ["PaulieB14"],
+  "tags": [
+    "aave",
+    "defi",
+    "lending",
+    "liquidation-risk",
+    "thegraph",
+    "subgraph",
+    "ethereum",
+    "health-factor",
+    "governance",
+    "cross-chain"
+  ]
 }
