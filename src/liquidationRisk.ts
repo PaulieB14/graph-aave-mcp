@@ -110,9 +110,11 @@ export async function getUserRiskPositions(
   return queryChain(riskSubgraphId(chain), query);
 }
 
-/** Protocol-wide risk stats (total/danger/warning/critical counts) */
+/** Protocol-wide risk stats (total/danger/warning/critical counts).
+ *  Includes `_meta` so callers can detect indexer lag post-compaction. */
 export async function getProtocolRiskStats(chain: string): Promise<unknown> {
   const query = `{
+    _meta { block { number timestamp hash } deployment hasIndexingErrors }
     protocolStats_collection(first: 10) {
       id
       protocol
@@ -208,11 +210,15 @@ export async function getHealthFactorHistory(
   return queryChain(riskSubgraphId(chain), query);
 }
 
-/** Cross-chain risk summary — queries all 5 chains in parallel */
+/** Cross-chain risk summary — queries all 5 chains in parallel.
+ *  Preserves chainKey + subgraph metadata on per-chain failures so the agent
+ *  can tell *which* chain failed (was previously masked as "unknown"). */
 export async function getCrossChainRiskSummary(): Promise<unknown> {
+  const chainKeys = RISK_CHAIN_NAMES;
   const results = await Promise.allSettled(
-    RISK_CHAIN_NAMES.map(async (chain) => {
+    chainKeys.map(async (chain) => {
       const stats = (await getProtocolRiskStats(chain)) as {
+        _meta?: { block?: { number?: number; timestamp?: number }; hasIndexingErrors?: boolean };
         protocolStats_collection?: Array<{
           network: string;
           totalPositions: string;
@@ -229,12 +235,25 @@ export async function getCrossChainRiskSummary(): Promise<unknown> {
         subgraphId: cfg.subgraphId,
         queries30d: cfg.queries30d,
         stats: stats?.protocolStats_collection ?? [],
+        as_of: {
+          source: "subgraph" as const,
+          block: stats?._meta?.block?.number,
+          timestamp: stats?._meta?.block?.timestamp,
+          hasIndexingErrors: stats?._meta?.hasIndexingErrors ?? false,
+        },
       };
     })
   );
-  return results.map((r) =>
-    r.status === "fulfilled"
-      ? r.value
-      : { chain: "unknown", error: (r as PromiseRejectedResult).reason?.message }
-  );
+  return results.map((r, i) => {
+    if (r.status === "fulfilled") return r.value;
+    const chain = chainKeys[i];
+    const cfg = LIQUIDATION_RISK_CHAINS[chain];
+    return {
+      chainKey: chain,
+      name: cfg?.name,
+      network: cfg?.chain,
+      subgraphId: cfg?.subgraphId,
+      error: (r as PromiseRejectedResult).reason?.message ?? "unknown error",
+    };
+  });
 }

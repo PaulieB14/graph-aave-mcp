@@ -34,10 +34,21 @@ import {
   getV4ClaimableRewards,
   getV4SwapQuote,
 } from "./aaveV4Api.js";
+import { RPC_CHAIN_NAMES } from "./rpcClient.js";
+import {
+  getLiveUserAccountData,
+  getLiveReserveDetail,
+} from "./viewContracts.js";
+import {
+  noteFinding,
+  listFindings,
+  deleteFinding,
+  getSessionState,
+} from "./sessionState.js";
 
 const server = new McpServer({
   name: "graph-aave-mcp",
-  version: "4.0.0",
+  version: "4.1.0",
 });
 
 // ---------------------------------------------------------------------------
@@ -1849,6 +1860,157 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
+// Live on-chain reads (view contracts) — fresh as of current block,
+// complements subgraph queries which lag chainhead.
+// ---------------------------------------------------------------------------
+
+// Tool: get_live_user_account_data — canonical current-block health factor
+server.registerTool(
+  "get_live_user_account_data",
+  {
+    description:
+      "LIVE on-chain read of a user's Aave V3 account state via Pool.getUserAccountData. " +
+      "Returns current-block health factor, total collateral/debt (base units, 8 decimals), " +
+      "available borrows, current liquidation threshold, and LTV. " +
+      "Use this BEFORE reporting any 'critical' or 'liquidatable' position from subgraph " +
+      "data — subgraphs lag chainhead by N blocks and a position rated CRITICAL in the " +
+      "index may already be liquidated (or no longer at risk). " +
+      "Response includes as_of.block so freshness survives context compaction.",
+    inputSchema: {
+      chain: z.enum(RPC_CHAIN_NAMES).describe("RPC chain key: ethereum, base, arbitrum, polygon, optimism, avalanche"),
+      userAddress: z.string().describe("0x-prefixed wallet address to query"),
+    },
+  },
+  async ({ chain, userAddress }) => {
+    try {
+      return textResult(await getLiveUserAccountData(chain, userAddress));
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// Tool: get_live_reserve_detail — single reserve, full state + config
+server.registerTool(
+  "get_live_reserve_detail",
+  {
+    description:
+      "LIVE on-chain read of one reserve via AaveProtocolDataProvider — " +
+      "current rates (supply/variable/stable APY), totals (aToken/stable/variable debt), " +
+      "indexes, plus config (LTV, liquidation threshold/bonus, reserve factor, " +
+      "active/frozen flags), token addresses (aToken/sDebt/vDebt), and caps. " +
+      "Authoritative current-block snapshot for a single asset.",
+    inputSchema: {
+      chain: z.enum(RPC_CHAIN_NAMES).describe("RPC chain key"),
+      assetAddress: z.string().describe("Underlying asset 0x address (e.g. USDC, WETH)"),
+    },
+  },
+  async ({ chain, assetAddress }) => {
+    try {
+      return textResult(await getLiveReserveDetail(chain, assetAddress));
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Session state — durable findings store, survives compaction & restart.
+// Stored as JSONL at $GRAPH_AAVE_MCP_STATE_DIR/findings.jsonl
+// (default ~/.graph-aave-mcp/findings.jsonl).
+// ---------------------------------------------------------------------------
+
+// Tool: note_finding
+server.registerTool(
+  "note_finding",
+  {
+    description:
+      "Persist a user-stated preference, watchlist entry, threshold, or any context " +
+      "that should survive conversation compaction and MCP restart. Examples: " +
+      "'monitor wallet 0xabc... on Base and Arbitrum', 'ignore stETH HF dips above 1.5', " +
+      "'alert only when collateral > $10k'. Returns the saved finding with an id. " +
+      "Call get_session_state at workflow start to recover saved findings.",
+    inputSchema: {
+      text: z.string().describe("The finding to remember verbatim"),
+      tags: z.array(z.string()).optional().describe("Optional tags for filtering (e.g. ['watchlist','wallet'])"),
+      namespace: z.string().optional().describe("Optional namespace to scope findings (default: 'default')"),
+    },
+  },
+  async ({ text, tags, namespace }) => {
+    try {
+      return textResult(await noteFinding(text, { tags, namespace }));
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// Tool: get_session_state
+server.registerTool(
+  "get_session_state",
+  {
+    description:
+      "Recover saved findings from the durable store — call this at the START of any " +
+      "monitoring workflow (e.g. cross_chain_risk_monitor) to re-orient after compaction " +
+      "or restart. Returns user-stated preferences, watchlists, and thresholds saved " +
+      "via note_finding. Treat returned findings as standing instructions for the session.",
+    inputSchema: {
+      namespace: z.string().optional().describe("Namespace to read (default: 'default')"),
+    },
+  },
+  async ({ namespace }) => {
+    try {
+      return textResult(await getSessionState(namespace));
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// Tool: list_findings — filtered/paginated read
+server.registerTool(
+  "list_findings",
+  {
+    description:
+      "List saved findings with filters. Use get_session_state for the simple case; " +
+      "use this when you need tag or pagination filtering.",
+    inputSchema: {
+      namespace: z.string().optional(),
+      tag: z.string().optional().describe("Return only findings with this tag"),
+      limit: z.number().optional().describe("Max findings to return (default 200)"),
+    },
+  },
+  async ({ namespace, tag, limit }) => {
+    try {
+      return textResult(await listFindings({ namespace, tag, limit }));
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// Tool: delete_finding
+server.registerTool(
+  "delete_finding",
+  {
+    description:
+      "Remove a finding from the durable store by id. Use when the user retracts a " +
+      "previously saved preference. Returns { removed: true|false }.",
+    inputSchema: {
+      id: z.string().describe("Finding id returned by note_finding"),
+    },
+  },
+  async ({ id }) => {
+    try {
+      const removed = await deleteFinding(id);
+      return textResult({ id, removed });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Prompts — multi-step guided workflows for any AI agent
 // ---------------------------------------------------------------------------
 server.registerPrompt(
@@ -2175,16 +2337,53 @@ server.registerPrompt(
         role: "user" as const,
         content: {
           type: "text" as const,
-          text: `Perform a cross-chain Aave liquidation risk analysis:
-1. Call get_cross_chain_risk_summary to get protocol-level stats across all 5 chains
-2. Identify which chain has the most critical/danger positions
-3. On the riskiest chain, call get_at_risk_positions(riskLevel="critical") to see the worst positions
-4. Call get_risk_alerts on that chain to see recent health factor transitions
-${userAddress ? `5. For wallet ${userAddress}:
-   - Call get_user_risk_profile on each chain to check their positions
-   - Call get_health_factor_history on chains where they have positions
-   - Assess: is this wallet at risk? Is their health factor trending down?` : ""}
-Summarize: total at-risk positions per chain, the most critical positions, recent risk movements, ${userAddress ? "and this wallet's risk profile" : "and recommended monitoring priorities"}.`,
+          text: `Perform a cross-chain Aave liquidation risk analysis.
+
+STEP 0 — Re-orient (run every time, including mid-conversation):
+   Call get_session_state to recover any standing user preferences from prior
+   turns — watchlists, thresholds, "ignore X" rules. These survive compaction;
+   conversation memory does not. Treat returned findings as binding instructions.
+
+STEP 1 — Subgraph sweep (fast, may lag chainhead by minutes):
+   Call get_cross_chain_risk_summary. Every per-chain entry now carries an
+   as_of.block + as_of.timestamp + hasIndexingErrors flag — note these. If any
+   chain is more than ~10 minutes behind wall-clock, flag it as STALE and treat
+   its risk counts as a lower bound, not the truth.
+
+STEP 2 — Pick the chain with the most critical/danger positions.
+
+STEP 3 — Drill in (still subgraph):
+   - get_at_risk_positions(chain=<that chain>, riskLevel="critical")
+   - get_risk_alerts(chain=<that chain>) for recent HF transitions
+
+STEP 4 — LIVE confirmation (REQUIRED before reporting any position as critical):
+   For every position you're about to call "critical" or "liquidatable":
+   - Call get_live_user_account_data(chain, userAddress) — this is the
+     current-block health factor straight from Pool.getUserAccountData.
+   - If the live HF disagrees materially with the subgraph HF (e.g. subgraph
+     says 0.97 but live says 1.4), TRUST THE LIVE READ and downgrade the
+     finding. Note the discrepancy explicitly.
+   - If a position the subgraph flagged is now liquidated (live HF returns
+     no debt), say so — don't report it as "currently critical".
+${userAddress ? `
+STEP 5 — Targeted wallet (${userAddress}):
+   For each RPC-supported chain (ethereum, base, arbitrum, polygon, optimism, avalanche):
+   - get_live_user_account_data(chain, "${userAddress}") for current HF
+   - On chains where they have positions, get_user_risk_profile + get_health_factor_history for trend
+   - Assess: live HF, trend direction, headroom to liquidation threshold.` : ""}
+
+STEP 6 — Persist what matters:
+   If the user states a preference, watchlist, or threshold during this
+   conversation ("only alert me above $10k", "ignore wallet 0xabc"), call
+   note_finding to save it so future invocations of this prompt pick it up
+   in STEP 0.
+
+OUTPUT — Summarize:
+   - Live-confirmed critical positions per chain (NOT raw subgraph counts)
+   - Subgraph staleness flags
+   - Recent risk transitions
+   - ${userAddress ? "Wallet's live HF + trend on each chain it has positions" : "Monitoring priorities"}
+   - Any findings you saved this turn`,
         },
       },
     ],
