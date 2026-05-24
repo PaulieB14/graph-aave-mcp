@@ -16,7 +16,10 @@
     },
     "build": {
       "openclawVersion": "1.0"
-    }
+    },
+    "extensions": [
+      "build/index.js"
+    ]
   },
   "scripts": {
     "build": "tsc && chmod 755 build/index.js",
