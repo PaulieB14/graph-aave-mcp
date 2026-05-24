@@ -24,7 +24,8 @@
     "prepublishOnly": "npm run build"
   },
   "files": [
-    "build"
+    "build",
+    "openclaw.plugin.json"
   ],
   "keywords": [
     "mcp",
