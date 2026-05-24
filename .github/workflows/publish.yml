@@ -56,7 +56,8 @@ jobs:
           sed -i.bak "s/^version:.*/version: $VERSION/" "$PUBLISH_DIR/SKILL.md"
           rm -f "$PUBLISH_DIR/SKILL.md.bak"
           npx --yes clawhub@latest skill publish "$PUBLISH_DIR" \
-            --slug graph-aave-mcp \
+            --slug graph-aave-mcp-v2 \
+            --name "Graph Aave MCP" \
             --version "$VERSION" \
             --tags latest \
             --changelog "v$VERSION — see github.com/${{ github.repository }}"
