@@ -31,11 +31,15 @@ jobs:
         run: npm version patch --no-git-tag-version
 
       - name: Publish to npm
+        id: npm_publish
+        continue-on-error: true
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to ClawHub
+        id: clawhub_publish
+        continue-on-error: true
         uses: nishantapatil3/clawhub-publish-action@v1
         with:
           clawhub-token: ${{ secrets.CLAWHUB_TOKEN }}
@@ -45,5 +49,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json
-          git commit -m "chore: bump version [skip ci]"
+          git commit -m "chore: bump version [skip ci]" || echo "nothing to commit"
           git push
+
+      - name: Report publish results
+        run: |
+          echo "npm publish: ${{ steps.npm_publish.outcome }}"
+          echo "clawhub publish: ${{ steps.clawhub_publish.outcome }}"
+          if [ "${{ steps.npm_publish.outcome }}" != "success" ] && [ "${{ steps.clawhub_publish.outcome }}" != "success" ]; then
+            echo "::error::Both publishes failed"
+            exit 1
+          fi
+          if [ "${{ steps.npm_publish.outcome }}" != "success" ]; then
+            echo "::warning::npm publish failed — check NPM_TOKEN at npmjs.com (Granular token needs read+write on graph-aave-mcp)"
+          fi
+          if [ "${{ steps.clawhub_publish.outcome }}" != "success" ]; then
+            echo "::warning::ClawHub publish failed — check CLAWHUB_TOKEN secret"
+          fi
