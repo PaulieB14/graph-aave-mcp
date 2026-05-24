@@ -35,6 +35,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Publish to ClawHub
+        uses: nishantapatil3/clawhub-publish-action@v1
+        with:
+          clawhub-token: ${{ secrets.CLAWHUB_TOKEN }}
+
       - name: Commit version bump
         run: |
           git config user.name "github-actions[bot]"
