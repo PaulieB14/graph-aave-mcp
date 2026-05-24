@@ -50,6 +50,8 @@ jobs:
             --family code-plugin \
             --version "$VERSION" \
             --tags latest \
+            --source-repo "${{ github.repository }}" \
+            --source-commit "${{ github.sha }}" \
             --changelog "Auto-published from main @ ${{ github.sha }}"
 
       - name: Commit version bump
