@@ -1,6 +1,0 @@
-{
-  "id": "graph-aave-mcp",
-  "name": "Graph Aave MCP",
-  "description": "MCP server for Aave V2/V3/V4 — 46 tools across 16 Graph subgraphs + Aave V4 API + on-chain view contracts.",
-  "version": "4.1.4"
-}

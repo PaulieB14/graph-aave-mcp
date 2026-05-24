@@ -8,27 +8,13 @@
     "graph-aave-mcp": "build/index.js"
   },
   "main": "./build/index.js",
-  "openclaw": {
-    "type": "code-plugin",
-    "category": "data",
-    "compat": {
-      "pluginApi": "1.0"
-    },
-    "build": {
-      "openclawVersion": "1.0"
-    },
-    "extensions": [
-      "build/index.js"
-    ]
-  },
   "scripts": {
     "build": "tsc && chmod 755 build/index.js",
     "start": "node build/index.js",
     "prepublishOnly": "npm run build"
   },
   "files": [
-    "build",
-    "openclaw.plugin.json"
+    "build"
   ],
   "keywords": [
     "mcp",

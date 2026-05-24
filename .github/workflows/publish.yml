@@ -37,22 +37,29 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish to ClawHub (as MCP code-plugin)
+      - name: Publish to ClawHub (as skill / discovery listing)
         id: clawhub_publish
         continue-on-error: true
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          echo "Publishing graph-aave-mcp v$VERSION to ClawHub as code-plugin"
+          echo "Publishing graph-aave-mcp v$VERSION to ClawHub as skill"
           npx --yes clawhub@latest login --no-input --token "$CLAWHUB_TOKEN"
-          npx --yes clawhub@latest package publish . \
-            --family code-plugin \
+          # Publish from a clean folder containing only SKILL.md so the CLI
+          # doesn't auto-detect this as a code-plugin (presence of bin field
+          # in repo package.json triggers plugin mode, which is wrong for
+          # an MCP server — MCP runs outside OpenClaw, not as a plugin).
+          PUBLISH_DIR=$(mktemp -d)
+          cp SKILL.md "$PUBLISH_DIR/SKILL.md"
+          # Bump version inside SKILL.md frontmatter to match package.json
+          sed -i.bak "s/^version:.*/version: $VERSION/" "$PUBLISH_DIR/SKILL.md"
+          rm -f "$PUBLISH_DIR/SKILL.md.bak"
+          npx --yes clawhub@latest skill publish "$PUBLISH_DIR" \
+            --slug graph-aave-mcp \
             --version "$VERSION" \
             --tags latest \
-            --source-repo "${{ github.repository }}" \
-            --source-commit "${{ github.sha }}" \
-            --changelog "Auto-published from main @ ${{ github.sha }}"
+            --changelog "v$VERSION — see github.com/${{ github.repository }}"
 
       - name: Commit version bump
         run: |
