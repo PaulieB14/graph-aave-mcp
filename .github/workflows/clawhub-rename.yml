@@ -24,4 +24,4 @@ jobs:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |
           npx --yes clawhub@latest login --no-input --token "$CLAWHUB_TOKEN"
-          npx --yes clawhub@latest skill rename "${{ inputs.from_slug }}" "${{ inputs.to_slug }}"
+          npx --yes clawhub@latest skill rename "${{ inputs.from_slug }}" "${{ inputs.to_slug }}" --yes
