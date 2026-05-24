@@ -1,27 +1,40 @@
-name: ClawHub rename (one-shot)
+name: ClawHub admin (one-shot)
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: 'Operation to run'
+        required: true
+        type: choice
+        options:
+          - rename
+          - delete
+        default: rename
       from_slug:
-        description: 'Existing slug to rename'
+        description: 'Existing slug (for rename: source; for delete: target)'
         required: true
         default: 'graph-aave-mcp'
       to_slug:
-        description: 'New slug (old becomes a redirect)'
-        required: true
+        description: 'New slug (rename only)'
+        required: false
         default: 'graph-aave-mcp-skill-archive'
 
 jobs:
-  rename:
+  admin:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Login + rename
+      - name: Login
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: npx --yes clawhub@latest login --no-input --token "$CLAWHUB_TOKEN"
+      - name: Run admin op
         run: |
-          npx --yes clawhub@latest login --no-input --token "$CLAWHUB_TOKEN"
-          npx --yes clawhub@latest skill rename "${{ inputs.from_slug }}" "${{ inputs.to_slug }}" --yes
+          if [ "${{ inputs.action }}" = "rename" ]; then
+            npx --yes clawhub@latest skill rename "${{ inputs.from_slug }}" "${{ inputs.to_slug }}" --yes
+          else
+            npx --yes clawhub@latest delete "${{ inputs.from_slug }}" --yes --reason "removing to free slug"
+          fi
