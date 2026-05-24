@@ -48,8 +48,6 @@ jobs:
           npx --yes clawhub@latest login --no-input --token "$CLAWHUB_TOKEN"
           npx --yes clawhub@latest package publish . \
             --family code-plugin \
-            --name graph-aave-mcp-plugin \
-            --display-name "Graph Aave MCP" \
             --version "$VERSION" \
             --tags latest \
             --source-repo "${{ github.repository }}" \
