@@ -37,12 +37,20 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish to ClawHub
+      - name: Publish to ClawHub (as MCP code-plugin)
         id: clawhub_publish
         continue-on-error: true
-        uses: nishantapatil3/clawhub-publish-action@v1
-        with:
-          clawhub-token: ${{ secrets.CLAWHUB_TOKEN }}
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Publishing graph-aave-mcp v$VERSION to ClawHub as code-plugin"
+          npx --yes clawhub@latest login --no-input --token "$CLAWHUB_TOKEN"
+          npx --yes clawhub@latest package publish . \
+            --family code-plugin \
+            --version "$VERSION" \
+            --tags latest \
+            --changelog "Auto-published from main @ ${{ github.sha }}"
 
       - name: Commit version bump
         run: |
