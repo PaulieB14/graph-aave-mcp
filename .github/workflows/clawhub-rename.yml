@@ -1,0 +1,27 @@
+name: ClawHub rename (one-shot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_slug:
+        description: 'Existing slug to rename'
+        required: true
+        default: 'graph-aave-mcp'
+      to_slug:
+        description: 'New slug (old becomes a redirect)'
+        required: true
+        default: 'graph-aave-mcp-skill-archive'
+
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Login + rename
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          npx --yes clawhub@latest login --no-input --token "$CLAWHUB_TOKEN"
+          npx --yes clawhub@latest skill rename "${{ inputs.from_slug }}" "${{ inputs.to_slug }}"
