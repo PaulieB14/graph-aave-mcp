@@ -45,6 +45,7 @@ import {
   deleteFinding,
   getSessionState,
 } from "./sessionState.js";
+import { getV4HubFlows, FlowType, HubName } from "./v4HubFlows.js";
 
 const server = new McpServer({
   name: "graph-aave-mcp",
@@ -2422,6 +2423,92 @@ Summarize: V4 hub/spoke architecture overview, rate comparison V3 vs V4, liquidi
       },
     ],
   })
+);
+
+// ---------------------------------------------------------------------------
+// Tool — get_v4_hub_flows (Aave V4 Omnigraph subgraph + AaveKit JOIN)
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "get_v4_hub_flows",
+  {
+    description:
+      "Use this for Aave V4 Hub<->Spoke liquidity routing events that AaveKit's " +
+      "GraphQL API does NOT expose: Add, Remove, Draw, Restore, RefreshPremium, " +
+      "ReportDeficit, TransferShares. Returns event-level flow data enriched with " +
+      "human spoke names (Main, Bluechip, Kelp, Lido, Ethena Correlated, Ethena " +
+      "Ecosystem, EtherFi, Forex, Gold, Lombard) and asset symbols. " +
+      "Use when the user asks 'where is liquidity moving in V4', 'which spoke is " +
+      "draining the Hub', 'show me recent borrows on Main', or wants the routing " +
+      "primitive that V4's official API hides. Backed by aave-v4-omnigraph subgraph.",
+    inputSchema: {
+      hubName: z
+        .enum(["Core", "Plus", "Prime"])
+        .optional()
+        .describe("Filter to one Hub: Core, Plus, or Prime."),
+      spokeName: z
+        .string()
+        .optional()
+        .describe(
+          "Filter to one spoke by human name (Main, Bluechip, Kelp, Lido, " +
+            "'Ethena Correlated', 'Ethena Ecosystem', Etherfi, Forex, Gold, Lombard). " +
+            "Case-insensitive."
+        ),
+      flowTypes: z
+        .array(
+          z.enum([
+            "ADD",
+            "REMOVE",
+            "DRAW",
+            "RESTORE",
+            "REFRESH_PREMIUM",
+            "REPORT_DEFICIT",
+            "TRANSFER_SHARES",
+          ])
+        )
+        .optional()
+        .describe(
+          "Filter to specific event types. DRAW = spoke borrows liquidity " +
+            "from hub; ADD = spoke supplies liquidity to hub; RESTORE = spoke " +
+            "returns drawn liquidity; REPORT_DEFICIT = bad debt reported."
+        ),
+      limit: z
+        .number()
+        .min(1)
+        .max(200)
+        .default(25)
+        .describe("Max flows to return (1-200, default 25)."),
+      sinceMinutes: z
+        .number()
+        .min(0)
+        .optional()
+        .describe(
+          "Only return flows from the last N minutes. Omit for any-time."
+        ),
+    },
+  },
+  async ({ hubName, spokeName, flowTypes, limit, sinceMinutes }) => {
+    try {
+      const result = await getV4HubFlows({
+        hubName: hubName as HubName | undefined,
+        spokeName,
+        flowTypes: flowTypes as FlowType[] | undefined,
+        limit,
+        sinceMinutes,
+      });
+      return textResult({
+        ...result,
+        notes: [
+          "Spoke name → address resolved via AaveKit. Asset symbol → address resolved via AaveKit reserves.",
+          "Amounts are raw on-chain values; *Human fields are decoded by token decimals.",
+          "Cross-reference current spoke utilization/APY with get_v4_reserves.",
+        ],
+      });
+    } catch (err) {
+      return errorResult(
+        `Failed to fetch V4 Hub flows: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
 );
 
 // ---------------------------------------------------------------------------
