@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createRequire } from "node:module";
 import { z } from "zod";
 import { queryChain } from "./graphClient.js";
 import { CHAINS, CHAIN_NAMES, LENDING_CHAIN_NAMES } from "./subgraphs.js";
@@ -47,9 +48,35 @@ import {
 } from "./sessionState.js";
 import { getV4HubFlows, FlowType, HubName } from "./v4HubFlows.js";
 
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { version: string };
+
+function handleCliMetadata(argv = process.argv.slice(2)): boolean {
+  const flags = new Set(argv);
+  if (flags.has("--version") || flags.has("-v")) {
+    console.log(packageJson.version);
+    return true;
+  }
+  if (flags.has("--help") || flags.has("-h")) {
+    console.log(`Usage: graph-aave-mcp [options]
+
+Options:
+  -v, --version  Print the package version.
+  -h, --help     Print this help message.
+
+Run without options to start the Graph AAVE MCP server over stdio.`);
+    return true;
+  }
+  return false;
+}
+
+if (handleCliMetadata()) {
+  process.exit(0);
+}
+
 const server = new McpServer({
   name: "graph-aave-mcp",
-  version: "4.1.0",
+  version: packageJson.version,
 });
 
 // ---------------------------------------------------------------------------
