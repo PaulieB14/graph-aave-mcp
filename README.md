@@ -11,7 +11,7 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 40 tools across 16 Graph subgraphs + the Aave V4 API.**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 50+ tools across 17 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
 
 Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
 
@@ -26,6 +26,7 @@ Covers lending markets, user positions, health factors, **cross-chain liquidatio
 | **The Graph subgraphs** | V2/V3 | 11 subgraphs across 7 chains — reserves, positions, events, governance | `GRAPH_API_KEY` (free) |
 | **Liquidation Risk subgraphs** | V3 | 5 chains — real-time health factors, risk scores, risk alerts, protocol risk stats | `GRAPH_API_KEY` (free) |
 | **Aave V4 API** | V4 | Hubs, spokes, reserves, exchange rates, user positions, activities, swap quotes, rewards | None needed |
+| **V4 Omnigraph subgraph** | V4 | Hub↔Spoke flow events, per-user risk-premium history, liquidation post-mortems, treasury/fee/deficit accounting, spoke config governance trail | `GRAPH_API_KEY` (free) |
 
 ## Quick Start
 
@@ -173,6 +174,8 @@ Real-time liquidation risk monitoring with health factors, risk scores (0–100)
 
 16 tools powered by `api.aave.com/graphql`. **No API key needed.**
 
+> **Note:** the V4 Omnigraph tools (next section) cover gaps the REST API doesn't expose and **require `GRAPH_API_KEY`**. The 16 tools listed below remain key-free.
+
 ### Liquidity Model
 
 | Tool | Description |
@@ -198,6 +201,22 @@ Real-time liquidation risk monitoring with health factors, risk scores (0–100)
 | `get_v4_user_activities` | Transaction history: supplies, borrows, repays, liquidations, swaps |
 | `get_v4_claimable_rewards` | Claimable Merkl and points rewards |
 | `get_v4_swap_quote` | Read-only swap pricing via CoW Protocol (MEV-protected) |
+
+---
+
+## V4 Omnigraph Tools (subgraph — fills gaps the Aave API doesn't expose)
+
+5 tools powered by the `aave-v-4` subgraph ([`QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs`](https://thegraph.com/explorer)). **Requires `GRAPH_API_KEY`** (the same free key used by V2/V3 subgraph tools).
+
+These cover what `api.aave.com/graphql` structurally can't return: Hub↔Spoke flow events, per-user risk-premium trajectories, liquidation post-mortems with full premium-delta context, treasury/fee/deficit accounting, and governance-trail snapshots.
+
+| Tool | Description |
+|------|-------------|
+| `get_v4_hub_flows` | Hub↔Spoke routing events (Add, Remove, Draw, Restore, RefreshPremium, ReportDeficit, TransferShares) with AaveKit-joined spoke names and asset symbols |
+| `get_v4_user_risk_trajectory` | Per-user risk-premium snapshot history — every RefreshPremium event for a user, plus the latest premium and the spoke it was set on |
+| `get_v4_liquidation_postmortem` | Full liquidation event by tx hash or user — collateral/debt amounts, liquidator, premium-share / offset-ray / restored-premium deltas |
+| `get_v4_treasury_flows` | Merged stream of FeeMint / Sweep / Reclaim / DeficitEliminated events ordered by block desc, optionally filtered by hub (Core/Plus/Prime) and time window |
+| `get_v4_spoke_config_history` | Spoke liquidation-config governance trail — current and historical targetHealthFactor, healthFactorForMaxBonus, liquidationBonusFactor per spoke |
 
 ### V4 Architecture
 
