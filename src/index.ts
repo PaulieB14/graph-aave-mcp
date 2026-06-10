@@ -46,6 +46,12 @@ import {
   getSessionState,
 } from "./sessionState.js";
 import { getV4HubFlows, FlowType, HubName } from "./v4HubFlows.js";
+import {
+  getV4UserRiskTrajectory,
+  getV4LiquidationPostmortem,
+  getV4TreasuryFlows,
+  getV4SpokeConfigHistory,
+} from "./v4Omnigraph.js";
 
 const server = new McpServer({
   name: "graph-aave-mcp",
@@ -2506,6 +2512,155 @@ server.registerTool(
     } catch (err) {
       return errorResult(
         `Failed to fetch V4 Hub flows: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tools — V4 Omnigraph extras (gaps AaveKit REST doesn't expose)
+// Subgraph deployment: QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs
+//
+// Curl-test recipe (substitute GRAPH_API_KEY):
+//   curl -sX POST \
+//     "https://gateway.thegraph.com/api/$GRAPH_API_KEY/deployments/id/QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs" \
+//     -H 'content-type: application/json' \
+//     -d '{"query":"{ _meta { block { number } } liquidationCalls(first: 1) { txHash user { id } } }"}'
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "get_v4_user_risk_trajectory",
+  {
+    description:
+      "Aave V4 per-user risk-premium history. Returns the user's risk-premium snapshots over time " +
+      "(one per RefreshPremium event), plus the latest premium and the spoke it was set on. " +
+      "Use for: agent-side modeling of a borrower's risk drift, identifying users approaching liquidation, " +
+      "or auditing premium accrual against AaveKit's aggregate risk view. Data AaveKit's REST API doesn't expose.",
+    inputSchema: {
+      userAddress: z.string().describe("EVM address of the user (e.g. 0x42c056dd...)"),
+      limit: z.number().int().positive().max(500).optional().describe("Snapshot count cap (default 50, max 500)"),
+    },
+  },
+  async ({ userAddress, limit }) => {
+    try {
+      const result = await getV4UserRiskTrajectory({ userAddress, limit });
+      return textResult({
+        source: "aave-v4-omnigraph",
+        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        ...result,
+        notes: [
+          "riskPremium values are raw ray (10^27) units; divide by 1e27 for the percentage.",
+          "Empty history likely means the user hasn't triggered a RefreshPremium event yet.",
+        ],
+      });
+    } catch (err) {
+      return errorResult(
+        `Failed to fetch V4 user risk trajectory: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+);
+
+server.registerTool(
+  "get_v4_liquidation_postmortem",
+  {
+    description:
+      "Aave V4 liquidation event details with full premium-delta context. Look up by tx hash or by user " +
+      "address. Returns the spoke, collateral/debt reserves, exact amounts, the liquidator, and the " +
+      "premium-share/offset-ray deltas that V4 records for each liquidation. Use for: forensic analysis " +
+      "of a specific liquidation, building a user's liquidation history, or auditing liquidator behavior. " +
+      "Data AaveKit's REST API doesn't expose.",
+    inputSchema: {
+      txHash: z.string().optional().describe("Transaction hash that contained the LiquidationCall (recommended for single-event lookup)"),
+      userAddress: z.string().optional().describe("User address — returns all liquidations of this user, latest first"),
+      limit: z.number().int().positive().max(200).optional().describe("Max liquidations to return (default 25, max 200)"),
+    },
+  },
+  async ({ txHash, userAddress, limit }) => {
+    try {
+      const result = await getV4LiquidationPostmortem({ txHash, userAddress, limit });
+      return textResult({
+        source: "aave-v4-omnigraph",
+        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        ...result,
+        notes: [
+          "Reserve IDs are composed of spokeAddress + reserveId-bytes (the trailing 1-2 bytes encode the reserve slot).",
+          "premiumSharesDelta / premiumOffsetRayDelta capture V4's risk-premium adjustment during the liquidation.",
+          "Pair with get_v4_user_risk_trajectory(user) for the full pre/post-liquidation premium picture.",
+        ],
+      });
+    } catch (err) {
+      return errorResult(
+        `Failed to fetch V4 liquidation postmortem: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+);
+
+server.registerTool(
+  "get_v4_treasury_flows",
+  {
+    description:
+      "Aave V4 treasury / fee-share / deficit accounting. Returns a merged stream of FeeMint, Sweep, Reclaim, " +
+      "and DeficitEliminated events ordered by block desc. Optionally filter by hub (Core/Plus/Prime) and time " +
+      "window. Use for: treasury reporting, fee-receiver attribution, identifying deficit events, monitoring " +
+      "reinvestment-controller activity. Data AaveKit's REST API doesn't expose.",
+    inputSchema: {
+      hubName: z.enum(["Core", "Plus", "Prime"]).optional().describe("Filter to a single hub. Omit for all hubs."),
+      sinceMinutes: z.number().int().positive().optional().describe("Look back N minutes from now (default: unbounded)"),
+      limit: z.number().int().positive().max(200).optional().describe("Max merged rows to return (default 25, max 200)"),
+    },
+  },
+  async ({ hubName, sinceMinutes, limit }) => {
+    try {
+      const result = await getV4TreasuryFlows({ hubName, sinceMinutes, limit });
+      return textResult({
+        source: "aave-v4-omnigraph",
+        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        ...result,
+        notes: [
+          "Empty result is normal for new V4 deployments — these events haven't fired yet.",
+          "FeeMint = fee accrual to feeReceiver. Sweep/Reclaim = reinvestment controller moves. DeficitEliminated = cross-spoke deficit cover.",
+          "Amounts are raw on-chain values in the asset's native decimals.",
+        ],
+      });
+    } catch (err) {
+      return errorResult(
+        `Failed to fetch V4 treasury flows: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+);
+
+server.registerTool(
+  "get_v4_spoke_config_history",
+  {
+    description:
+      "Aave V4 spoke liquidation-config history. Returns the current targetHealthFactor / " +
+      "healthFactorForMaxBonus / liquidationBonusFactor for a spoke and its full snapshot history " +
+      "(one row per governance update). Use for: auditing parameter drift, modeling how config changes " +
+      "affected liquidation behavior, governance-trail reporting. Data AaveKit's REST API doesn't expose.",
+    inputSchema: {
+      spokeAddress: z.string().describe("Spoke contract address (e.g. 0x65407b940966954b23dfa3caa5c0702bb42984dc)"),
+      limit: z.number().int().positive().max(500).optional().describe("Max history snapshots (default 50, max 500)"),
+    },
+  },
+  async ({ spokeAddress, limit }) => {
+    try {
+      const result = await getV4SpokeConfigHistory({ spokeAddress, limit });
+      return textResult({
+        source: "aave-v4-omnigraph",
+        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        ...result,
+        notes: [
+          "Health factor values are 1e18-scaled (e.g. 1307500000000000000 = 1.3075).",
+          "liquidationBonusFactor is in basis points (10000 = 100%).",
+          "history[] is sorted block desc; current is the latest snapshot.",
+        ],
+      });
+    } catch (err) {
+      return errorResult(
+        `Failed to fetch V4 spoke config history: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
