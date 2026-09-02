@@ -150,12 +150,27 @@ export function rpcClient(chainKey: string): PublicClient {
     );
   }
   const rpcUrl = process.env[cfg.rpcEnvVar];
+  // Bound the transport. viem's defaults (10s timeout x 3 retries) let a slow
+  // or rate-limited public endpoint stall a tool call past 60s, and a hanging
+  // tool is worse for an agent than a failing one — it burns the caller's
+  // budget with no result and no error to act on. The unconfigured fallback
+  // gets the tighter budget because it is the one that rate-limits.
   const client = createPublicClient({
     chain: cfg.viemChain,
-    transport: rpcUrl ? http(rpcUrl) : http(),
+    transport: rpcUrl
+      ? http(rpcUrl, { timeout: 8_000, retryCount: 1 })
+      : http(undefined, { timeout: 6_000, retryCount: 1 }),
   }) as PublicClient;
   _clientCache[chainKey] = client;
   return client;
+}
+
+/** Appended to RPC failures so the caller knows the one-line fix. */
+export function rpcHint(chainKey: string): string {
+  const cfg = RPC_CHAINS[chainKey];
+  return cfg
+    ? ` If this keeps failing or timing out, set ${cfg.rpcEnvVar} to a dedicated RPC endpoint — the unconfigured public fallback is rate-limited.`
+    : "";
 }
 
 export function rpcAddresses(chainKey: string) {

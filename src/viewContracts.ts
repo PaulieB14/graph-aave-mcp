@@ -129,6 +129,14 @@ export async function getLiveUserAccountData(
  * Live per-asset reserve data via AaveProtocolDataProvider — current rates,
  * indexes, debt totals, plus config (LTV, liq threshold, caps).
  */
+/**
+ * NOTE ON RPC RELIABILITY. These read live chain state, so they inherit
+ * whatever endpoint is configured. With no `<CHAIN>_RPC_URL` set, viem falls
+ * back to a public endpoint that is commonly rate-limited or unauthenticated,
+ * and a multi-call tool like this one is the first to feel it. The transport is
+ * bounded (see rpcClient.ts) so a bad endpoint fails in seconds instead of
+ * stalling, but the fix is to set the env var — the error text says so.
+ */
 export async function getLiveReserveDetail(
   chainKey: string,
   assetAddress: string

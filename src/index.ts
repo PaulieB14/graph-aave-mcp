@@ -35,7 +35,7 @@ import {
   getV4ClaimableRewards,
   getV4SwapQuote,
 } from "./aaveV4Api.js";
-import { RPC_CHAIN_NAMES } from "./rpcClient.js";
+import { RPC_CHAIN_NAMES, rpcHint } from "./rpcClient.js";
 import {
   getLiveUserAccountData,
   getLiveReserveDetail,
@@ -139,6 +139,109 @@ function parsePTMaturity(symbol: string): Date | null {
   const month = MONTH_ABBR[m[2]];
   if (month === undefined) return null;
   return new Date(parseInt(m[3]), month, parseInt(m[1]));
+}
+
+/**
+ * Trim a reserves/markets payload before it reaches the model.
+ *
+ * `get_aave_reserves` returned every field of every reserve unconditionally:
+ * on Ethereum that is 67 reserves x 27 fields = 112KB, about 28k tokens, or
+ * ~14% of a 200k context window for one call. An agent asking "what is the
+ * USDC supply rate" paid for all 67. `symbols` and `limit` narrow the rows;
+ * `compact` drops to the pre-formatted `_humanReadable` block, which is what
+ * most questions actually need.
+ *
+ * Defaults leave the payload byte-identical to previous versions, so this is
+ * additive — callers opt into the smaller shape.
+ */
+/**
+ * Same job as shapeReserves, for the V4 AaveKit shape.
+ *
+ * V4 nests the symbol at asset.underlying.info.symbol and carries an icon URL
+ * per row, so the flat shaper cannot be reused. Unfiltered this is 71 reserves
+ * and ~123KB (~31k tokens).
+ */
+function shapeV4Reserves(
+  payload: unknown,
+  opts: { symbols?: string[]; limit?: number; compact?: boolean }
+): unknown {
+  const p = payload as { reserves?: Array<Record<string, any>> } | undefined;
+  if (!p || !Array.isArray(p.reserves)) return payload;
+  let rows = p.reserves;
+  const total = rows.length;
+
+  const symOf = (r: Record<string, any>) =>
+    String(r?.asset?.underlying?.info?.symbol ?? "").toLowerCase();
+
+  if (opts.symbols && opts.symbols.length > 0) {
+    const want = new Set(opts.symbols.map((x) => x.toLowerCase()));
+    rows = rows.filter((r) => want.has(symOf(r)));
+  }
+  if (typeof opts.limit === "number" && opts.limit >= 0) rows = rows.slice(0, opts.limit);
+  if (opts.compact) {
+    rows = rows.map((r) => ({
+      symbol: r?.asset?.underlying?.info?.symbol,
+      address: r?.asset?.underlying?.address,
+      spoke: r?.spoke?.name,
+      chainId: r?.asset?.underlying?.chain?.chainId,
+      supplyApy: r?.summary?.supplyApy?.value,
+      borrowApy: r?.summary?.borrowApy?.value,
+      supplied: r?.summary?.supplied?.amount?.value ?? r?.summary?.supplied?.value,
+      borrowed: r?.summary?.borrowed?.amount?.value ?? r?.summary?.borrowed?.value,
+      canBorrow: r?.canBorrow,
+      canSupply: r?.canSupply,
+      canUseAsCollateral: r?.canUseAsCollateral,
+    }));
+  }
+  const out: Record<string, unknown> = { ...p, reserves: rows };
+  if (rows.length !== total) {
+    out["_filtered"] = { returned: rows.length, matchedBeforeLimit: total };
+  }
+  return out;
+}
+
+function shapeReserves(
+  data: unknown,
+  opts: { symbols?: string[]; limit?: number; compact?: boolean }
+): unknown {
+  if (!data || typeof data !== "object") return data;
+  const d = { ...(data as Record<string, unknown>) };
+  const key = Array.isArray(d["reserves"])
+    ? "reserves"
+    : Array.isArray(d["markets"])
+    ? "markets"
+    : null;
+  if (!key) return data;
+
+  let rows = d[key] as Array<Record<string, unknown>>;
+  const total = rows.length;
+
+  if (opts.symbols && opts.symbols.length > 0) {
+    const want = new Set(opts.symbols.map((x) => x.toLowerCase()));
+    rows = rows.filter((r) => {
+      const sym = String(r["symbol"] ?? "").toLowerCase();
+      const nm = String(r["name"] ?? "").toLowerCase();
+      const input = (r["inputToken"] as Record<string, unknown> | undefined)?.["symbol"];
+      return want.has(sym) || want.has(nm) || want.has(String(input ?? "").toLowerCase());
+    });
+  }
+  if (typeof opts.limit === "number" && opts.limit >= 0) {
+    rows = rows.slice(0, opts.limit);
+  }
+  if (opts.compact) {
+    rows = rows.map((r) => ({
+      symbol: r["symbol"] ?? (r["inputToken"] as Record<string, unknown> | undefined)?.["symbol"],
+      underlyingAsset: r["underlyingAsset"] ?? r["id"],
+      ...(r["_humanReadable"] ? { _humanReadable: r["_humanReadable"] } : {}),
+      ...(r["_warnings"] ? { _warnings: r["_warnings"] } : {}),
+    }));
+  }
+
+  d[key] = rows;
+  if (rows.length !== total) {
+    d["_filtered"] = { returned: rows.length, matchedBeforeLimit: total };
+  }
+  return d;
 }
 
 function annotateReserves(data: unknown): unknown {
@@ -424,7 +527,9 @@ server.registerTool(
       "Supply APY % = liquidityRate / 1e27 * 100. Borrow APY % = variableBorrowRate / 1e27 * 100. " +
       "Amounts are in native token units — divide by 10^decimals for human-readable. " +
       "Ideal for: 'What assets can I lend on Arbitrum?', 'What is USDC supply rate on Base?', " +
-      "'Show me all AAVE V3 markets on Polygon'.",
+      "'Show me all AAVE V3 markets on Polygon'. " +
+      "SIZE: unfiltered this returns every active reserve (~28k tokens on Ethereum). " +
+      "Pass `symbols` for a named asset, or `compact: true` for rates only.",
     inputSchema: {
       chain: z
         .enum(LENDING_CHAIN_NAMES)
@@ -438,9 +543,30 @@ server.registerTool(
         .describe(
           "Set true to include frozen, paused, or inactive reserves. Default false (active only)."
         ),
+      symbols: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Only return these asset symbols, e.g. [\"USDC\",\"WETH\"]. Case-insensitive. " +
+            "Strongly recommended — the unfiltered Ethereum response is ~28k tokens."
+        ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Max reserves to return, highest TVL first. Default 100 (all)."),
+      compact: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Return only symbol, address and the pre-formatted _humanReadable APY/LTV block. " +
+            "Cuts the payload roughly 5x and is enough for most rate questions."
+        ),
     },
   },
-  async ({ chain, includeInactive }) => {
+  async ({ chain, includeInactive, symbols, limit, compact }) => {
     try {
       const cfg = CHAINS[chain];
 
@@ -465,7 +591,9 @@ server.registerTool(
           }
         }`;
         const data = await queryChain(cfg.subgraphId, query);
-        return textResult(annotateReserves(data));
+        return textResult(
+          shapeReserves(annotateReserves(data), { symbols, limit, compact })
+        );
       }
 
       const isPausedField = cfg.hasIsPaused !== false ? "\n          isPaused" : "";
@@ -500,7 +628,9 @@ server.registerTool(
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
-      return textResult(annotateReserves(data));
+      return textResult(
+        shapeReserves(annotateReserves(data), { symbols, limit, compact })
+      );
     } catch (error) {
       return errorResult(error);
     }
@@ -1919,7 +2049,12 @@ server.registerTool(
     try {
       return textResult(await getLiveUserAccountData(chain, userAddress));
     } catch (error) {
-      return errorResult(error);
+      // A timeout here is nearly always the unconfigured public RPC,
+      // so say which env var fixes it rather than surfacing a bare
+      // 'HTTP request failed'.
+      const e = error instanceof Error ? error : new Error(String(error));
+      e.message = e.message + rpcHint(chain);
+      return errorResult(e);
     }
   }
 );
@@ -1943,7 +2078,12 @@ server.registerTool(
     try {
       return textResult(await getLiveReserveDetail(chain, assetAddress));
     } catch (error) {
-      return errorResult(error);
+      // A timeout here is nearly always the unconfigured public RPC,
+      // so say which env var fixes it rather than surfacing a bare
+      // 'HTTP request failed'.
+      const e = error instanceof Error ? error : new Error(String(error));
+      e.message = e.message + rpcHint(chain);
+      return errorResult(e);
     }
   }
 );
@@ -2227,9 +2367,15 @@ server.registerTool("get_v4_spokes", {
 
 // Tool 18: get_v4_reserves
 server.registerTool("get_v4_reserves", {
-  description: "Get Aave V4 reserves with supply/borrow APYs, risk params (collateral factor, caps), and status. Use get_aave_reserves for V2/V3. No API key needed.",
-  inputSchema: { chainId: z.number().optional().describe("Chain ID. Defaults to Ethereum.") },
-}, async ({ chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4Reserves(chainId) }); } catch (e) { return errorResult(e); } });
+  description: "Get Aave V4 reserves with supply/borrow APYs, risk params (collateral factor, caps), and status. Use get_aave_reserves for V2/V3. No API key needed. " +
+    "SIZE: unfiltered this returns every reserve (~31k tokens). Pass `symbols` for a named asset, or `compact: true` for rates only.",
+  inputSchema: {
+    chainId: z.number().optional().describe("Chain ID. Defaults to Ethereum."),
+    symbols: z.array(z.string()).optional().describe("Only return these asset symbols, e.g. [\"USDC\",\"WETH\"]. Case-insensitive."),
+    limit: z.number().int().min(1).max(200).optional().describe("Max reserves to return. Default all."),
+    compact: z.boolean().default(false).describe("Return only symbol, address, spoke and APYs. Cuts the payload ~10x."),
+  },
+}, async ({ chainId, symbols, limit, compact }) => { try { return textResult({ source: "aave-v4-api", data: shapeV4Reserves(await getV4Reserves(chainId), { symbols, limit, compact }) }); } catch (e) { return errorResult(e); } });
 
 // Tool 19: get_v4_chains
 server.registerTool("get_v4_chains", {
@@ -2239,15 +2385,25 @@ server.registerTool("get_v4_chains", {
 
 // Tool 20: get_v4_exchange_rate
 server.registerTool("get_v4_exchange_rate", {
-  description: "Get exchange rate for any token via Aave V4's Chainlink oracle integration. Supports ERC-20 tokens, native tokens (ETH), and fiat currencies. No API key needed.",
+  description: "Get exchange rate for any token via Aave V4's Chainlink oracle integration. Supports ERC-20 tokens, native tokens (ETH), and fiat currencies. Pass EITHER tokenAddress OR native:true. No API key needed.",
   inputSchema: {
-    tokenAddress: z.string().optional().describe("ERC-20 token address (e.g. WETH: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2)"),
+    tokenAddress: z.string().optional().describe("ERC-20 token address (e.g. WETH: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2). Required unless native:true."),
     chainId: z.number().default(1).describe("Chain ID for the token"),
     native: z.boolean().optional().describe("Set true to get native token (ETH) price instead of ERC-20"),
     to: z.string().default("USD").describe("Target currency: USD, EUR, or GBP"),
   },
 }, async ({ tokenAddress, chainId, native, to }) => {
   try {
+    // Neither field is schema-required because exactly one of the two is, and
+    // the schema cannot express that. Without this check the erc20 branch sent
+    // `address: undefined` and the caller got a raw GraphQL type error naming
+    // an argument they never passed.
+    if (!native && !tokenAddress) {
+      throw new Error(
+        "Pass either tokenAddress (an ERC-20 address) or native:true (for the chain's native token). " +
+          "Example: { native: true, chainId: 1 } for ETH/USD."
+      );
+    }
     const from = native ? { type: "native" as const, chainId } : { type: "erc20" as const, chainId, address: tokenAddress! };
     return textResult({ source: "aave-v4-api", data: await getV4ExchangeRate(from, to) });
   } catch (e) { return errorResult(e); }

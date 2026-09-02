@@ -11,7 +11,7 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 50+ tools across 17 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 51 tools across 17 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
 
 Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
 
@@ -36,6 +36,10 @@ claude mcp add graph-aave -- npx -y graph-aave-mcp
 
 # Set Graph API key for subgraph tools (V4 tools work without it)
 export GRAPH_API_KEY=your-key-here
+
+# Optional but recommended: the two live on-chain tools read via RPC, and the
+# unconfigured public fallback is rate-limited or blocked on many networks.
+export ETHEREUM_RPC_URL=https://your-endpoint
 ```
 
 <details>
@@ -65,6 +69,11 @@ Free Graph API key: [thegraph.com/studio](https://thegraph.com/studio/) (100K qu
 ## V2/V3 Tools (The Graph Subgraphs)
 
 15 tools + 1 raw query escape hatch. Requires `GRAPH_API_KEY`.
+
+> **Response size.** `get_aave_reserves` returns every active reserve by default —
+> on Ethereum that is 67 reserves, ~28k tokens. Pass `symbols: ["USDC"]` for one
+> asset (~675 tokens), `compact: true` for rates only, or `limit` to cap the rows.
+> `get_v4_reserves` takes the same three options.
 
 ### Discovery
 
@@ -172,7 +181,7 @@ Real-time liquidation risk monitoring with health factors, risk scores (0–100)
 
 ## V4 Tools (Aave API)
 
-16 tools powered by `api.aave.com/graphql`. **No API key needed.**
+17 tools powered by `api.v4.aave.com/graphql`. **No API key needed.** (`api.aave.com/graphql` is an alias for the same schema; override either with `AAVE_V4_API_URL`.)
 
 > **Note:** the V4 Omnigraph tools (next section) cover gaps the REST API doesn't expose and **require `GRAPH_API_KEY`**. The 16 tools listed below remain key-free.
 
@@ -281,6 +290,32 @@ npm install
 npm run build
 GRAPH_API_KEY=your-key node build/index.js
 ```
+
+### Tests
+
+```bash
+npm test                                     # V4 tools only
+GRAPH_API_KEY=... ETHEREUM_RPC_URL=... npm test   # everything
+```
+
+`test/smoke.mjs` starts the server over stdio and calls every registered tool,
+failing if any returns an error or an unexpectedly empty collection. Tools whose
+backend is unavailable in the current environment (no Graph key, no reachable
+RPC) are skipped rather than failed, so the suite is meaningful without
+credentials and thorough with them.
+
+It exists because `get_v4_hub_flows` shipped pointing at an undeployed subgraph
+and nobody noticed: Graph Studio answers a missing subgraph with HTTP 200 and
+`{"message":"Not found"}`, the client only checked for a GraphQL `errors` key,
+and the tool returned `flows: []` — indistinguishable from "no activity on
+chain". Every backend call now fails loudly instead.
+
+## Known issues
+
+- **`get_v4_hub_flows` is unavailable.** Its Aave V4 Omnigraph subgraph is no
+  longer deployed at the pinned Studio URL, so the tool now returns a clear
+  error instead of an empty result. Point `AAVE_V4_OMNIGRAPH_URL` at a live
+  deployment to re-enable it.
 
 ## License
 

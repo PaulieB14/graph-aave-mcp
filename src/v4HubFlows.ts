@@ -5,7 +5,58 @@
 const SUBGRAPH_URL =
   process.env.AAVE_V4_OMNIGRAPH_URL ||
   "https://api.studio.thegraph.com/query/1745687/aave-v-4/v0.1.1";
-const AAVEKIT_URL = "https://api.aave.com/graphql";
+// Same default and same override as aaveV4Api.ts. Hardcoding the alias here
+// meant AAVE_V4_API_URL redirected half the server and not the other half.
+const AAVEKIT_URL = process.env.AAVE_V4_API_URL || "https://api.v4.aave.com/graphql";
+
+/**
+ * POST a GraphQL query and fail loudly on anything that is not a GraphQL reply.
+ *
+ * The Studio gateway answers a missing/undeployed subgraph with HTTP **200**
+ * and `{"message":"Not found"}` — no `errors` key. Code that only checked
+ * `json.errors` therefore fell through to `data?.field || []` and reported an
+ * absent backend as "zero results", which reads as "nothing happened on chain"
+ * rather than "this tool is not working". That is the failure this guards.
+ */
+async function gqlPost<T>(url: string, query: string, label: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+  } catch (err) {
+    throw new Error(
+      `${label} unreachable at ${url}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`${label} HTTP ${res.status} from ${url}: ${text.slice(0, 200)}`);
+  }
+  let json: { data?: T; errors?: unknown[]; message?: string };
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`${label} returned non-JSON from ${url}: ${text.slice(0, 200)}`);
+  }
+  if (json.errors) {
+    throw new Error(`${label} error: ${JSON.stringify(json.errors).slice(0, 300)}`);
+  }
+  if (json.data === undefined) {
+    // The {"message":"Not found"} case, plus any other 200-with-no-data body.
+    const hint =
+      url === SUBGRAPH_URL
+        ? " The Aave V4 Omnigraph subgraph is not deployed at this URL." +
+          " Set AAVE_V4_OMNIGRAPH_URL to a live deployment to re-enable this tool."
+        : "";
+    throw new Error(
+      `${label} returned no data from ${url}: ${text.slice(0, 160)}.${hint}`
+    );
+  }
+  return json.data;
+}
 
 // In-process caches so the AaveKit lookups happen once per server run.
 let spokeAddressToName: Map<string, string> | null = null;
@@ -13,18 +64,13 @@ let assetAddressToSymbol: Map<string, string> | null = null;
 
 async function loadSpokeRegistry(): Promise<Map<string, string>> {
   if (spokeAddressToName) return spokeAddressToName;
-  const res = await fetch(AAVEKIT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query: `{ spokes(request: { query: { chainIds: [1] } }) { name address } }`,
-    }),
-  });
-  const json = (await res.json()) as {
-    data?: { spokes?: Array<{ name: string; address: string }> };
-  };
+  const data = await gqlPost<{ spokes?: Array<{ name: string; address: string }> }>(
+    AAVEKIT_URL,
+    `{ spokes(request: { query: { chainIds: [1] } }) { name address } }`,
+    "AaveKit spokes"
+  );
   const map = new Map<string, string>();
-  for (const s of json.data?.spokes || []) {
+  for (const s of data.spokes || []) {
     map.set(s.address.toLowerCase(), s.name);
   }
   spokeAddressToName = map;
@@ -33,24 +79,19 @@ async function loadSpokeRegistry(): Promise<Map<string, string>> {
 
 async function loadAssetRegistry(): Promise<Map<string, string>> {
   if (assetAddressToSymbol) return assetAddressToSymbol;
-  const res = await fetch(AAVEKIT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query: `{ reserves(request: { query: { chainIds: [1] } }) {
+  const data = await gqlPost<{
+    reserves?: Array<{
+      asset: { underlying: { address: string; info: { symbol: string } | null } };
+    }>;
+  }>(
+    AAVEKIT_URL,
+    `{ reserves(request: { query: { chainIds: [1] } }) {
         asset { underlying { address info { symbol } } }
       } }`,
-    }),
-  });
-  const json = (await res.json()) as {
-    data?: {
-      reserves?: Array<{
-        asset: { underlying: { address: string; info: { symbol: string } | null } };
-      }>;
-    };
-  };
+    "AaveKit reserves"
+  );
   const map = new Map<string, string>();
-  for (const r of json.data?.reserves || []) {
+  for (const r of data.reserves || []) {
     const addr = r.asset.underlying.address.toLowerCase();
     const symbol = r.asset.underlying.info?.symbol || "?";
     map.set(addr, symbol);
@@ -180,20 +221,12 @@ export async function getV4HubFlows(args: HubFlowsArgs): Promise<{
     }
   }`;
 
-  const res = await fetch(SUBGRAPH_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
-  const json = (await res.json()) as {
-    data?: { hubSpokeFlows?: RawFlow[]; _meta?: { block?: { number: number } } };
-    errors?: unknown[];
-  };
-  if (json.errors) {
-    throw new Error(`Omnigraph error: ${JSON.stringify(json.errors)}`);
-  }
-  const raw = json.data?.hubSpokeFlows || [];
-  const syncedBlock = json.data?._meta?.block?.number ?? null;
+  const data = await gqlPost<{
+    hubSpokeFlows?: RawFlow[];
+    _meta?: { block?: { number: number } };
+  }>(SUBGRAPH_URL, query, "Aave V4 Omnigraph");
+  const raw = data.hubSpokeFlows || [];
+  const syncedBlock = data._meta?.block?.number ?? null;
 
   const flows: EnrichedFlow[] = raw.map((f) => {
     const spokeAddr = (f.spoke?.id || "").toLowerCase();

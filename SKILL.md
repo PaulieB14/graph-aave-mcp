@@ -1,6 +1,6 @@
 ---
 name: graph-aave-mcp
-description: Aave V2/V3/V4 MCP server — 46 tools across 16 Graph subgraphs + Aave V4 API + on-chain view contracts. Reserves, positions, cross-chain liquidation risk monitoring with live HF confirmation, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, protocol history, and a durable findings store that survives context compaction.
+description: Aave V2/V3/V4 MCP server — 47 tools across 16 Graph subgraphs + Aave V4 API + on-chain view contracts. Reserves, positions, cross-chain liquidation risk monitoring with live HF confirmation, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, protocol history, and a durable findings store that survives context compaction.
 version: 4.1.0
 metadata:
   openclaw:
@@ -18,7 +18,7 @@ metadata:
 
 # graph-aave-mcp
 
-MCP server for Aave V2, V3, and V4 — 46 tools across 16 Graph subgraphs + the Aave V4 API + on-chain view contracts.
+MCP server for Aave V2, V3, and V4 — 47 tools across 16 Graph subgraphs + the Aave V4 API + on-chain view contracts.
 
 ## Setup
 
@@ -41,9 +41,9 @@ export GRAPH_API_KEY=your-key-here
 
 ## What it does
 
-- **V2/V3** (16 tools): Reserves, positions, liquidations, borrows, supplies, flash loans, governance across 11 subgraphs on 7 chains (Ethereum, Arbitrum, Base, Polygon, Optimism, Avalanche)
+- **V2/V3** (16 tools): Reserves, positions, liquidations, borrows, supplies, flash loans, governance across 11 subgraphs on 7 chains (Ethereum, Arbitrum, Base, Polygon, Optimism, Avalanche). `get_aave_reserves` and `get_v4_reserves` accept `symbols` / `limit` / `compact` — use them, the unfiltered Ethereum response is ~28k tokens
 - **Liquidation Risk** (8 tools): Cross-chain health factors, risk scores, risk alerts, at-risk positions across 5 chains, with **live on-chain HF confirmation against Aave view contracts**
-- **V4 API** (16 tools): Hubs, spokes, reserves, exchange rates, user positions, activities, swap quotes, claimable rewards
+- **V4 API** (17 tools): Hubs, spokes, reserves, exchange rates, user positions, activities, swap quotes, claimable rewards
 - **Findings store** (new in 4.1.0): durable per-session findings that survive context compaction
 
 ## What's new in 4.1.0
