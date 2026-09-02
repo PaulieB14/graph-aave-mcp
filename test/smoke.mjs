@@ -97,7 +97,11 @@ const ARGS = {
   get_v4_user_activities: { userAddress: WHALE },
   get_v4_claimable_rewards: { userAddress: WHALE },
   get_v4_swap_quote: { sellTokenAddress: USDC, buyTokenAddress: WETH, sellAmount: "1000000", userAddress: WHALE },
-  get_v4_hub_flows: {},
+  get_v4_hub_flows: { limit: 3 },
+  get_v4_user_risk_trajectory: { userAddress: WHALE, limit: 3 },
+  get_v4_liquidation_postmortem: { userAddress: WHALE, limit: 3 },
+  get_v4_treasury_flows: { limit: 3 },
+  get_v4_spoke_config_history: { spokeAddress: "0xba1b3d55d249692b669a164024a838309b7508af", limit: 3 },
 };
 
 /**
@@ -121,11 +125,7 @@ const EXPECT_DATA = new Set([
 
 /** Tools that cannot pass right now, with the reason. Keeps the run green
  *  while staying honest — remove an entry the moment its backend is fixed. */
-const KNOWN_BROKEN = {
-  get_v4_hub_flows:
-    "Aave V4 Omnigraph subgraph is not deployed (Studio returns 200 + Not found). " +
-    "Set AAVE_V4_OMNIGRAPH_URL to a live deployment.",
-};
+const KNOWN_BROKEN = {};
 
 const NEEDS_KEY = new Set([
   "get_aave_reserves","get_aave_reserve","get_aave_user_position","simulate_health_factor",
@@ -134,6 +134,9 @@ const NEEDS_KEY = new Set([
   "get_proposal_votes","query_aave_subgraph","get_aave_schema","get_at_risk_positions",
   "get_user_risk_profile","get_protocol_risk_stats","get_risk_alerts","get_risk_liquidations",
   "get_health_factor_history","get_cross_chain_risk_summary",
+  // Omnigraph tools query the decentralized network through the gateway.
+  "get_v4_hub_flows","get_v4_user_risk_trajectory","get_v4_liquidation_postmortem",
+  "get_v4_treasury_flows","get_v4_spoke_config_history",
 ]);
 
 const proc = spawn("node", ["build/index.js"], { stdio: ["pipe", "pipe", "pipe"] });

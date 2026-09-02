@@ -1,10 +1,18 @@
+import { queryChain } from "./graphClient.js";
+
 // Aave V4 Omnigraph subgraph client + AaveKit JOIN helper.
 // Returns Hub<->Spoke routing events that AaveKit's GraphQL API doesn't expose,
 // enriched with human spoke names + asset symbols from AaveKit.
 
-const SUBGRAPH_URL =
-  process.env.AAVE_V4_OMNIGRAPH_URL ||
-  "https://api.studio.thegraph.com/query/1745687/aave-v-4/v0.1.1";
+// The Omnigraph subgraph moved to the decentralized network; the old Studio URL
+// is undeployed and answers HTTP 200 + {"message":"Not found"}, which is why
+// this tool silently returned `flows: []` for weeks. Query the same deployment
+// v4Omnigraph.ts uses, through the gateway. AAVE_V4_OMNIGRAPH_URL is still
+// honoured for a self-hosted or Studio deployment.
+const DEPLOYMENT_ID =
+  process.env.AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID ||
+  "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs";
+const SUBGRAPH_URL = process.env.AAVE_V4_OMNIGRAPH_URL || "";
 // Same default and same override as aaveV4Api.ts. Hardcoding the alias here
 // meant AAVE_V4_API_URL redirected half the server and not the other half.
 const AAVEKIT_URL = process.env.AAVE_V4_API_URL || "https://api.v4.aave.com/graphql";
@@ -48,8 +56,9 @@ async function gqlPost<T>(url: string, query: string, label: string): Promise<T>
     // The {"message":"Not found"} case, plus any other 200-with-no-data body.
     const hint =
       url === SUBGRAPH_URL
-        ? " The Aave V4 Omnigraph subgraph is not deployed at this URL." +
-          " Set AAVE_V4_OMNIGRAPH_URL to a live deployment to re-enable this tool."
+        ? " No Aave V4 Omnigraph subgraph is deployed at this URL." +
+          " Unset AAVE_V4_OMNIGRAPH_URL to use the decentralized-network" +
+          " deployment via the gateway, or point it at a live one."
         : "";
     throw new Error(
       `${label} returned no data from ${url}: ${text.slice(0, 160)}.${hint}`
@@ -221,10 +230,14 @@ export async function getV4HubFlows(args: HubFlowsArgs): Promise<{
     }
   }`;
 
-  const data = await gqlPost<{
+  type FlowsResult = {
     hubSpokeFlows?: RawFlow[];
     _meta?: { block?: { number: number } };
-  }>(SUBGRAPH_URL, query, "Aave V4 Omnigraph");
+  };
+  // Gateway by default (needs GRAPH_API_KEY); a direct URL only if one is set.
+  const data = SUBGRAPH_URL
+    ? await gqlPost<FlowsResult>(SUBGRAPH_URL, query, "Aave V4 Omnigraph")
+    : ((await queryChain(DEPLOYMENT_ID, query)) as FlowsResult);
   const raw = data.hubSpokeFlows || [];
   const syncedBlock = data._meta?.block?.number ?? null;
 

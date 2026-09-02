@@ -310,12 +310,15 @@ and nobody noticed: Graph Studio answers a missing subgraph with HTTP 200 and
 and the tool returned `flows: []` — indistinguishable from "no activity on
 chain". Every backend call now fails loudly instead.
 
-## Known issues
+## Environment variables
 
-- **`get_v4_hub_flows` is unavailable.** Its Aave V4 Omnigraph subgraph is no
-  longer deployed at the pinned Studio URL, so the tool now returns a clear
-  error instead of an empty result. Point `AAVE_V4_OMNIGRAPH_URL` at a live
-  deployment to re-enable it.
+| Variable | Needed for | Notes |
+|---|---|---|
+| `GRAPH_API_KEY` | all subgraph + Omnigraph tools | [Free key](https://thegraph.com/studio/apikeys/). V4 AaveKit tools work without it. |
+| `ETHEREUM_RPC_URL` (and `BASE_`, `ARBITRUM_`, `POLYGON_`, `OPTIMISM_`, `AVALANCHE_`) | the two live on-chain tools | Optional but recommended — the unconfigured public fallback is rate-limited or blocked on many networks. |
+| `AAVE_V4_API_URL` | V4 AaveKit tools | Defaults to `https://api.v4.aave.com/graphql`. |
+| `AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID` | Omnigraph tools | Defaults to the decentralized-network deployment. |
+| `AAVE_V4_OMNIGRAPH_URL` | Omnigraph tools | Set only to bypass the gateway for a self-hosted/Studio deployment. |
 
 ## License
 
