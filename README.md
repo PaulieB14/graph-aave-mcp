@@ -11,7 +11,7 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 51 tools across 17 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 57 tools across 17 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
 
 Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
 
@@ -227,6 +227,21 @@ These cover what `api.aave.com/graphql` structurally can't return: Hub↔Spoke f
 | `get_v4_treasury_flows` | Merged stream of FeeMint / Sweep / Reclaim / DeficitEliminated events ordered by block desc, optionally filtered by hub (Core/Plus/Prime) and time window |
 | `get_v4_spoke_config_history` | Spoke liquidation-config governance trail — current and historical targetHealthFactor, healthFactorForMaxBonus, liquidationBonusFactor per spoke |
 
+## V4 Subgraph Tools — Base (Coinbase tokenized stocks) + Ethereum
+
+6 network-aware tools backed by the Aave V4 subgraph. **Default `network: "base"`** — the Coinbase Stocks hub on Base ([subgraph `9x1tg7KX3RXspnK7R1mahAZsM5gTmFhLrmJSbkoBsDdq`](https://thegraph.com/explorer/subgraphs/9x1tg7KX3RXspnK7R1mahAZsM5gTmFhLrmJSbkoBsDdq)). Pass `network: "ethereum"` for Core/Plus/Prime. **Requires `GRAPH_API_KEY`.**
+
+| Tool | Description |
+|------|-------------|
+| `get_v4_recent_liquidations` | Liquidations newest-first, filter by `liquidator` / `user` / `sinceHours`; collateral seized, debt restored, shares, premium deltas, per-liquidator counts |
+| `get_v4_hub_assets` | Per-asset borrow rate %, liquidity fee %, accrued protocol fees, fee receiver, IR strategy |
+| `get_v4_config_changes` | Hub↔spoke cap snapshots, reserve config snapshots, liquidation-config snapshots, position-manager whitelist (optional `spoke`) |
+| `get_v4_hub_daily_flows` | Daily supplied/withdrawn/borrowed/repaid/deficit per hub asset, optional raw flow events |
+| `get_v4_user_activity` | User risk premium + history, liquidations suffered, supply/withdraw/borrow/repay/collateral activity |
+| `get_v4_treasury_events` | Merged FeeMint / Sweep / Reclaim / DeficitEliminated / ReportDeficit stream |
+
+Example: *"Who's liquidating tokenized stocks on Aave V4 Base?"* → `get_v4_recent_liquidations`. *"What's the USDC borrow rate and fees on the Base stocks hub?"* → `get_v4_hub_assets` (≈2.1%, 10% liquidity fee).
+
 ### V4 Architecture
 
 ```
@@ -318,6 +333,7 @@ chain". Every backend call now fails loudly instead.
 | `ETHEREUM_RPC_URL` (and `BASE_`, `ARBITRUM_`, `POLYGON_`, `OPTIMISM_`, `AVALANCHE_`) | the two live on-chain tools | Optional but recommended — the unconfigured public fallback is rate-limited or blocked on many networks. |
 | `AAVE_V4_API_URL` | V4 AaveKit tools | Defaults to `https://api.v4.aave.com/graphql`. |
 | `AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID` | Omnigraph tools | Defaults to the decentralized-network deployment. |
+| `AAVE_V4_BASE_SUBGRAPH_ID` | V4 subgraph tools (`network: base`) | Defaults to `9x1tg7KX3RXspnK7R1mahAZsM5gTmFhLrmJSbkoBsDdq`. |
 | `AAVE_V4_OMNIGRAPH_URL` | Omnigraph tools | Set only to bypass the gateway for a self-hosted/Studio deployment. |
 
 ## License
