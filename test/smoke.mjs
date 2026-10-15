@@ -102,6 +102,13 @@ const ARGS = {
   get_v4_liquidation_postmortem: { userAddress: WHALE, limit: 3 },
   get_v4_treasury_flows: { limit: 3 },
   get_v4_spoke_config_history: { spokeAddress: "0xba1b3d55d249692b669a164024a838309b7508af", limit: 3 },
+  // V4 subgraph, Base default (Coinbase stocks hub)
+  get_v4_recent_liquidations: { limit: 3 },
+  get_v4_hub_assets: {},
+  get_v4_config_changes: { limit: 3 },
+  get_v4_hub_daily_flows: { days: 7 },
+  get_v4_user_activity: { user: "0x23cad661e2c5f4290a9d1b08209a2a03d7426e29", limit: 3 },
+  get_v4_treasury_events: { limit: 3 },
 };
 
 /**
@@ -121,6 +128,7 @@ const EXPECT_DATA = new Set([
   "get_protocol_risk_stats", "list_risk_chains", "get_cross_chain_risk_summary",
   "get_v4_hubs", "get_v4_spokes", "get_v4_reserves", "get_v4_chains",
   "get_v4_protocol_history", "get_v4_hub_flows",
+  "get_v4_recent_liquidations", "get_v4_hub_assets", "get_v4_config_changes", "get_v4_hub_daily_flows",
 ]);
 
 /** Tools that cannot pass right now, with the reason. Keeps the run green
@@ -137,6 +145,7 @@ const NEEDS_KEY = new Set([
   // Omnigraph tools query the decentralized network through the gateway.
   "get_v4_hub_flows","get_v4_user_risk_trajectory","get_v4_liquidation_postmortem",
   "get_v4_treasury_flows","get_v4_spoke_config_history",
+  "get_v4_recent_liquidations","get_v4_hub_assets","get_v4_config_changes","get_v4_hub_daily_flows","get_v4_user_activity","get_v4_treasury_events",
 ]);
 
 const proc = spawn("node", ["build/index.js"], { stdio: ["pipe", "pipe", "pipe"] });

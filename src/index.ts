@@ -53,6 +53,10 @@ import {
   getV4TreasuryFlows,
   getV4SpokeConfigHistory,
 } from "./v4Omnigraph.js";
+import {
+  getRecentLiquidations, getHubAssets, getConfigChanges, getHubDailyFlows,
+  getUserActivity, getTreasuryEvents,
+} from "./v4Subgraph.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version: string };
@@ -2848,6 +2852,76 @@ server.registerTool(
     }
   }
 );
+
+
+// ---------------------------------------------------------------------------
+// Tools — Aave V4 subgraph, network-aware (Base default; Coinbase stocks hub)
+// Base subgraph: 9x1tg7KX3RXspnK7R1mahAZsM5gTmFhLrmJSbkoBsDdq
+// ---------------------------------------------------------------------------
+const v4Net = z.enum(["base", "ethereum"]).optional()
+  .describe("V4 deployment: 'base' (default, Coinbase tokenized-stocks hub) or 'ethereum' (Core/Plus/Prime)");
+
+function v4Tool(name: string, description: string, inputSchema: Record<string, z.ZodTypeAny>,
+  fn: (args: any) => Promise<unknown>) {
+  server.registerTool(name, { description, inputSchema: { network: v4Net, ...inputSchema } }, async (args: any) => {
+    try {
+      return textResult(await fn({ ...args, network: args.network ?? "base" }));
+    } catch (err) {
+      return errorResult(`${name} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+}
+
+v4Tool("get_v4_recent_liquidations",
+  "Aave V4 liquidations from the subgraph (Base by default): liquidator, borrower, spoke, collateral/debt " +
+  "reserves, debt restored, collateral seized, shares moved and premium deltas, newest first, plus a per-liquidator " +
+  "count. Filter by liquidator or user. Not exposed by the official Aave V4 API.",
+  {
+    liquidator: z.string().optional().describe("Only liquidations by this liquidator address"),
+    user: z.string().optional().describe("Only liquidations of this borrower address"),
+    sinceHours: z.number().positive().optional().describe("Look back N hours (default: all time)"),
+    limit: z.number().int().positive().max(200).optional().describe("Max rows (default 25)"),
+  }, getRecentLiquidations);
+
+v4Tool("get_v4_hub_assets",
+  "Aave V4 hub assets with borrow rate (drawnRate as %), liquidity fee %, accrued protocol fees (human units), " +
+  "fee receiver, IR strategy and reinvestment controller. Base by default.",
+  { hub: z.string().optional().describe("Hub address filter (omit for all hubs)") }, getHubAssets);
+
+v4Tool("get_v4_config_changes",
+  "Aave V4 config-change history: hub<->spoke caps/risk-premium threshold/active/halted snapshots, reserve " +
+  "config snapshots (collateralRisk, paused, frozen, borrowable), spoke liquidation config snapshots " +
+  "(targetHealthFactor 1e18, bonus factor bps) and the position-manager whitelist. Base by default.",
+  {
+    spoke: z.string().optional().describe("Spoke address filter"),
+    limit: z.number().int().positive().max(200).optional().describe("Max rows per section (default 25)"),
+  }, getConfigChanges);
+
+v4Tool("get_v4_hub_daily_flows",
+  "Aave V4 daily hub<->spoke flow totals per hub asset (supplied, withdrawn, borrowed, repaid, deficit, flow count), " +
+  "optionally with the raw recent flow events. Base by default.",
+  {
+    underlying: z.string().optional().describe("Underlying token address filter"),
+    days: z.number().int().positive().max(365).optional().describe("Days back (default 30)"),
+    includeRaw: z.boolean().optional().describe("Also return recent raw HubSpokeFlow events"),
+    limit: z.number().int().positive().max(200).optional().describe("Max raw flows (default 20)"),
+  }, getHubDailyFlows);
+
+v4Tool("get_v4_user_activity",
+  "Aave V4 per-user view from the subgraph: latest risk premium (ray), risk-premium history, liquidations " +
+  "suffered, and spoke activity (supply/withdraw/borrow/repay/collateral toggles). Base by default.",
+  {
+    user: z.string().describe("User address"),
+    limit: z.number().int().positive().max(200).optional().describe("Max rows per section (default 25)"),
+  }, getUserActivity);
+
+v4Tool("get_v4_treasury_events",
+  "Aave V4 treasury events merged newest-first: FeeMint, Sweep, Reclaim, DeficitEliminated and spoke ReportDeficit, " +
+  "with per-type counts. Base by default.",
+  {
+    sinceHours: z.number().positive().optional().describe("Look back N hours (default: all time)"),
+    limit: z.number().int().positive().max(200).optional().describe("Max merged rows (default 25)"),
+  }, getTreasuryEvents);
 
 // ---------------------------------------------------------------------------
 // Start server
