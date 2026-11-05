@@ -12,8 +12,9 @@
     "build": "tsc && chmod 755 build/index.js",
     "start": "node build/index.js",
     "prepublishOnly": "npm run build",
-    "test": "node test/smoke.mjs",
-    "test:key": "node test/smoke.mjs"
+    "test": "npm run test:unit && node test/smoke.mjs",
+    "test:key": "node test/smoke.mjs",
+    "test:unit": "node --test test/unit/graphClient.test.mjs"
   },
   "files": [
     "build"
