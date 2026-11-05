@@ -1,7 +1,7 @@
 ---
 name: graph-aave-mcp
 description: Aave V2/V3/V4 MCP server — 51 tools across 16 Graph subgraphs + Aave V4 API + on-chain view contracts. Reserves, positions, cross-chain liquidation risk monitoring with live HF confirmation, governance, V4 hubs/spokes, V4 Base tokenized-stock liquidations, exchange rates, swap quotes, rewards, protocol history, and a durable findings store that survives context compaction.
-version: 4.3.1
+version: 4.3.2
 metadata:
   openclaw:
     requires:

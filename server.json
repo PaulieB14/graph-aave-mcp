@@ -6,12 +6,12 @@
     "url": "https://github.com/PaulieB14/graph-aave-mcp",
     "source": "github"
   },
-  "version": "4.3.1",
+  "version": "4.3.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "graph-aave-mcp",
-      "version": "4.3.1",
+      "version": "4.3.2",
       "transport": {
         "type": "stdio"
       },
