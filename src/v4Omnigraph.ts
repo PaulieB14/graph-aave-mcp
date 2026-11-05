@@ -7,11 +7,9 @@
 // Decentralized network deployment: QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs
 // Queried through gateway via GRAPH_API_KEY (see graphClient.ts).
 
-import { queryChain } from "./graphClient.js";
+import { queryV4Ethereum, V4_OMNIGRAPH_DEPLOYMENT_ID } from "./v4Config.js";
+export { V4_OMNIGRAPH_DEPLOYMENT_ID };
 
-const DEPLOYMENT_ID =
-  process.env.AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID ||
-  "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs";
 
 // Hub addresses (same set v4HubFlows.ts uses; kept here so callers can filter
 // by hub name without touching the older file's exports).
@@ -65,7 +63,7 @@ export async function getV4UserRiskTrajectory(
       }
     }
   }`;
-  const data = (await queryChain(DEPLOYMENT_ID, query, { user, limit })) as MetaBlock & {
+  const data = (await queryV4Ethereum(query, { user, limit })) as MetaBlock & {
     user?: {
       latestRiskPremium: string;
       latestRiskPremiumSpoke: { id: string } | null;
@@ -153,7 +151,7 @@ export async function getV4LiquidationPostmortem(
       premiumSharesDelta premiumOffsetRayDelta restoredPremiumRay
     }
   }`;
-  const data = (await queryChain(DEPLOYMENT_ID, query)) as MetaBlock & {
+  const data = (await queryV4Ethereum(query)) as MetaBlock & {
     liquidationCalls: Array<{
       txHash: string; block: string; timestamp: string;
       spoke: { id: string }; collateralReserve: { id: string }; debtReserve: { id: string };
@@ -259,7 +257,7 @@ export async function getV4TreasuryFlows(
     }
   }`;
 
-  const data = (await queryChain(DEPLOYMENT_ID, query)) as MetaBlock & {
+  const data = (await queryV4Ethereum(query)) as MetaBlock & {
     feeMints: Array<{ txHash: string; block: string; timestamp: string; feeReceiver: string; shares: string; assets: string; hubAsset: { id: string } }>;
     sweeps: Array<{ txHash: string; block: string; timestamp: string; reinvestmentController: string; amount: string; hubAsset: { id: string } }>;
     reclaims: Array<{ txHash: string; block: string; timestamp: string; reinvestmentController: string; amount: string; hubAsset: { id: string } }>;
@@ -342,7 +340,7 @@ export async function getV4SpokeConfigHistory(
       }
     }
   }`;
-  const data = (await queryChain(DEPLOYMENT_ID, query, { spoke, limit })) as MetaBlock & {
+  const data = (await queryV4Ethereum(query, { spoke, limit })) as MetaBlock & {
     spokeLiquidationConfig?: {
       targetHealthFactor: string; healthFactorForMaxBonus: string;
       liquidationBonusFactor: number; updatedAtBlock: string; updatedAtTx: string;

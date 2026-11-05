@@ -11,7 +11,7 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 57 tools across 17 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 51 tools across 18 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
 
 Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
 
@@ -332,7 +332,8 @@ chain". Every backend call now fails loudly instead.
 | `GRAPH_API_KEY` | all subgraph + Omnigraph tools | [Free key](https://thegraph.com/studio/apikeys/). V4 AaveKit tools work without it. |
 | `ETHEREUM_RPC_URL` (and `BASE_`, `ARBITRUM_`, `POLYGON_`, `OPTIMISM_`, `AVALANCHE_`) | the two live on-chain tools | Optional but recommended — the unconfigured public fallback is rate-limited or blocked on many networks. |
 | `AAVE_V4_API_URL` | V4 AaveKit tools | Defaults to `https://api.v4.aave.com/graphql`. |
-| `AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID` | Omnigraph tools | Defaults to the decentralized-network deployment. |
+| `AAVE_V4_ETHEREUM_SUBGRAPH_ID` | V4 Ethereum / Omnigraph tools | Defaults to subgraph `2Gu5HCAnWrNk2pXidscdhNEQhrwLgMKmssuCe9JhZhAe` (queried by subgraph ID, follows republishes). |
+| `AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID` | V4 Ethereum / Omnigraph tools | Optional: pin a specific deployment (IPFS hash) instead of the subgraph ID. |
 | `AAVE_V4_BASE_SUBGRAPH_ID` | V4 subgraph tools (`network: base`) | Defaults to `9x1tg7KX3RXspnK7R1mahAZsM5gTmFhLrmJSbkoBsDdq`. |
 | `AAVE_V4_OMNIGRAPH_URL` | Omnigraph tools | Set only to bypass the gateway for a self-hosted/Studio deployment. |
 

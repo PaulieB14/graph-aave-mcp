@@ -2,13 +2,14 @@
 //
 // Base:     subgraph 9x1tg7KX3RXspnK7R1mahAZsM5gTmFhLrmJSbkoBsDdq
 //           (Coinbase tokenized-stocks hub; deployment QmUVNhjnrUfzYyKwkKFo3Sm8nD8hU5EzGFQSb1weWY4k94)
-// Ethereum: deployment QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs (Core/Plus/Prime)
+// Ethereum: subgraph 2Gu5HCAnWrNk2pXidscdhNEQhrwLgMKmssuCe9JhZhAe (Core/Plus/Prime) — see v4Config.ts
 //
 // Everything here is data the official Aave V4 API doesn't expose: liquidation
 // detail, hub asset fee accounting, config-change history, hub<->spoke daily
 // flows, risk-premium history and treasury events.
 
 import { queryChain, querySubgraphId } from "./graphClient.js";
+import { V4_ETHEREUM_TARGET } from "./v4Config.js";
 
 export type V4Network = "base" | "ethereum";
 
@@ -19,8 +20,8 @@ export const V4_NETWORKS: Record<V4Network, { kind: "subgraph" | "deployment"; i
     chainId: 8453,
   },
   ethereum: {
-    kind: "deployment",
-    id: process.env.AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID || "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+    kind: V4_ETHEREUM_TARGET.kind,
+    id: V4_ETHEREUM_TARGET.id,
     chainId: 1,
   },
 };
