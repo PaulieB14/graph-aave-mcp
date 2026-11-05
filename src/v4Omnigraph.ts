@@ -9,9 +9,10 @@
 
 import { queryChain } from "./graphClient.js";
 
-const DEPLOYMENT_ID =
+export const V4_OMNIGRAPH_DEPLOYMENT_ID =
   process.env.AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID ||
   "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs";
+const DEPLOYMENT_ID = V4_OMNIGRAPH_DEPLOYMENT_ID;
 
 // Hub addresses (same set v4HubFlows.ts uses; kept here so callers can filter
 // by hub name without touching the older file's exports).

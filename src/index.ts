@@ -52,6 +52,7 @@ import {
   getV4LiquidationPostmortem,
   getV4TreasuryFlows,
   getV4SpokeConfigHistory,
+  V4_OMNIGRAPH_DEPLOYMENT_ID,
 } from "./v4Omnigraph.js";
 import {
   getRecentLiquidations, getHubAssets, getConfigChanges, getHubDailyFlows,
@@ -2710,7 +2711,7 @@ server.registerTool(
 //
 // Curl-test recipe (substitute GRAPH_API_KEY):
 //   curl -sX POST \
-//     "https://gateway.thegraph.com/api/$GRAPH_API_KEY/deployments/id/QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs" \
+//     -H "Authorization: Bearer $GRAPH_API_KEY" "https://gateway.thegraph.com/api/deployments/id/QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs" \
 //     -H 'content-type: application/json' \
 //     -d '{"query":"{ _meta { block { number } } liquidationCalls(first: 1) { txHash user { id } } }"}'
 // ---------------------------------------------------------------------------
@@ -2733,7 +2734,7 @@ server.registerTool(
       const result = await getV4UserRiskTrajectory({ userAddress, limit });
       return textResult({
         source: "aave-v4-omnigraph",
-        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        deployment: V4_OMNIGRAPH_DEPLOYMENT_ID,
         ...result,
         notes: [
           "riskPremium values are raw ray (10^27) units; divide by 1e27 for the percentage.",
@@ -2768,7 +2769,7 @@ server.registerTool(
       const result = await getV4LiquidationPostmortem({ txHash, userAddress, limit });
       return textResult({
         source: "aave-v4-omnigraph",
-        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        deployment: V4_OMNIGRAPH_DEPLOYMENT_ID,
         ...result,
         notes: [
           "Reserve IDs are composed of spokeAddress + reserveId-bytes (the trailing 1-2 bytes encode the reserve slot).",
@@ -2803,7 +2804,7 @@ server.registerTool(
       const result = await getV4TreasuryFlows({ hubName, sinceMinutes, limit });
       return textResult({
         source: "aave-v4-omnigraph",
-        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        deployment: V4_OMNIGRAPH_DEPLOYMENT_ID,
         ...result,
         notes: [
           "Empty result is normal for new V4 deployments — these events haven't fired yet.",
@@ -2837,7 +2838,7 @@ server.registerTool(
       const result = await getV4SpokeConfigHistory({ spokeAddress, limit });
       return textResult({
         source: "aave-v4-omnigraph",
-        deployment: "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs",
+        deployment: V4_OMNIGRAPH_DEPLOYMENT_ID,
         ...result,
         notes: [
           "Health factor values are 1e18-scaled (e.g. 1307500000000000000 = 1.3075).",
