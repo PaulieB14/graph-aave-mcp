@@ -1,4 +1,4 @@
-import { queryChain } from "./graphClient.js";
+import { queryV4Ethereum } from "./v4Config.js";
 
 // Aave V4 Omnigraph subgraph client + AaveKit JOIN helper.
 // Returns Hub<->Spoke routing events that AaveKit's GraphQL API doesn't expose,
@@ -9,9 +9,6 @@ import { queryChain } from "./graphClient.js";
 // this tool silently returned `flows: []` for weeks. Query the same deployment
 // v4Omnigraph.ts uses, through the gateway. AAVE_V4_OMNIGRAPH_URL is still
 // honoured for a self-hosted or Studio deployment.
-const DEPLOYMENT_ID =
-  process.env.AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID ||
-  "QmcKrCRSPrMABEfQjyPF6DqhbY7zzcEj6h5QxQmKLcHFSs";
 const SUBGRAPH_URL = process.env.AAVE_V4_OMNIGRAPH_URL || "";
 // Same default and same override as aaveV4Api.ts. Hardcoding the alias here
 // meant AAVE_V4_API_URL redirected half the server and not the other half.
@@ -237,7 +234,7 @@ export async function getV4HubFlows(args: HubFlowsArgs): Promise<{
   // Gateway by default (needs GRAPH_API_KEY); a direct URL only if one is set.
   const data = SUBGRAPH_URL
     ? await gqlPost<FlowsResult>(SUBGRAPH_URL, query, "Aave V4 Omnigraph")
-    : ((await queryChain(DEPLOYMENT_ID, query)) as FlowsResult);
+    : ((await queryV4Ethereum(query)) as FlowsResult);
   const raw = data.hubSpokeFlows || [];
   const syncedBlock = data._meta?.block?.number ?? null;
 

@@ -2,7 +2,7 @@
   "name": "graph-aave-mcp",
   "version": "4.3.1",
   "mcpName": "io.github.PaulieB14/graph-aave-mcp",
-  "description": "MCP server for AAVE V2/V3/V4 — 57 tools across 16 Graph subgraphs + Aave V4 API + on-chain view contracts. Reserves, positions, cross-chain liquidation risk monitoring with live HF confirmation, governance, V4 hubs/spokes, V4 Base tokenized-stock liquidations, exchange rates, swap quotes, rewards, protocol history, and a durable findings store that survives context compaction.",
+  "description": "MCP server for AAVE V2/V3/V4 — 51 tools across 18 Graph subgraphs + Aave V4 API + on-chain view contracts. Reserves, positions, cross-chain liquidation risk monitoring with live HF confirmation, governance, V4 hubs/spokes, V4 Base tokenized-stock liquidations, exchange rates, swap quotes, rewards, protocol history, and a durable findings store that survives context compaction.",
   "type": "module",
   "bin": {
     "graph-aave-mcp": "build/index.js"
@@ -14,7 +14,7 @@
     "prepublishOnly": "npm run build",
     "test": "npm run test:unit && node test/smoke.mjs",
     "test:key": "node test/smoke.mjs",
-    "test:unit": "node --test test/unit/graphClient.test.mjs"
+    "test:unit": "node --test test/unit/"
   },
   "files": [
     "build"
