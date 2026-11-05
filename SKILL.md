@@ -1,7 +1,7 @@
 ---
 name: graph-aave-mcp
-description: Aave V2/V3/V4 MCP server — 57 tools across 16 Graph subgraphs + Aave V4 API + on-chain view contracts. Reserves, positions, cross-chain liquidation risk monitoring with live HF confirmation, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, protocol history, and a durable findings store that survives context compaction.
-version: 4.1.0
+description: Aave V2/V3/V4 MCP server — 51 tools across 16 Graph subgraphs + Aave V4 API + on-chain view contracts. Reserves, positions, cross-chain liquidation risk monitoring with live HF confirmation, governance, V4 hubs/spokes, V4 Base tokenized-stock liquidations, exchange rates, swap quotes, rewards, protocol history, and a durable findings store that survives context compaction.
+version: 4.3.1
 metadata:
   openclaw:
     requires:
@@ -18,7 +18,7 @@ metadata:
 
 # graph-aave-mcp
 
-MCP server for Aave V2, V3, and V4 — 57 tools across 16 Graph subgraphs + the Aave V4 API + on-chain view contracts.
+MCP server for Aave V2, V3, and V4 — 51 tools across 16 Graph subgraphs + the Aave V4 API + on-chain view contracts.
 
 ## Setup
 
@@ -45,9 +45,15 @@ export GRAPH_API_KEY=your-key-here
 - **Liquidation Risk** (8 tools): Cross-chain health factors, risk scores, risk alerts, at-risk positions across 5 chains, with **live on-chain HF confirmation against Aave view contracts**
 - **V4 Subgraph** (6 tools, Base default / Ethereum): liquidations by liquidator/user, hub asset rates + fees, config-change history, daily hub flows, user risk premium + activity, treasury events
 - **V4 API** (17 tools): Hubs, spokes, reserves, exchange rates, user positions, activities, swap quotes, claimable rewards
-- **Findings store** (new in 4.1.0): durable per-session findings that survive context compaction
+- **V4 Omnigraph** (4 tools): user risk trajectory, liquidation post-mortems, treasury flows, spoke config history
+- **Findings store** (4 tools): durable per-session findings that survive context compaction
 
-## What's new in 4.1.0
+## What's new in 4.2.0 – 4.3.x
+
+- V4 subgraph tools: Base (Coinbase tokenized-stocks hub) by default, Ethereum optional via `network`
+- Dead backends fail loudly instead of returning empty data; reserve tools accept `symbols` / `limit` / `compact`
+
+## Added in 4.1.0
 
 - Live on-chain reads — every reported health factor is double-checked against the Aave protocol's view contracts before surfacing
 - Durable findings store — investigations persist across context-window compaction so multi-step analyses don't lose state
