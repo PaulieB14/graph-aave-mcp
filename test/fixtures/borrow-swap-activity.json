@@ -1,0 +1,26 @@
+{
+  "__typename": "BorrowSwapActivity",
+  "user": "0x4604FcA1451Fb16BD86B10835D569E9e70c4327D",
+  "timestamp": "2026-11-12T18:16:23+00:00",
+  "txHash": "0xbc0e0e764b87f62de8a027913561d84aa8b919791051760c783e51d37b5a657c",
+  "orderClass": "MARKET",
+  "kind": "CURRENT",
+  "status": "FULFILLED",
+  "chain": { "name": "Ethereum", "chainId": 1 },
+  "sell": {
+    "reserve": { "asset": { "underlying": { "info": { "symbol": "USDt" } } } },
+    "amount": {
+      "amount": { "value": "1004.396320", "decimals": 6 },
+      "exchange": { "value": "1003.3216", "symbol": "$" },
+      "token": { "info": { "symbol": "USDt" } }
+    }
+  },
+  "buy": {
+    "reserve": { "asset": { "underlying": { "info": { "symbol": "USDC" } } } },
+    "amount": {
+      "amount": { "value": "1006.018691", "decimals": 6 },
+      "exchange": { "value": "1005.7510", "symbol": "$" },
+      "token": { "info": { "symbol": "USDC" } }
+    }
+  }
+}

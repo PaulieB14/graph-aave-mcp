@@ -6,6 +6,17 @@
 
 const AAVE_API = process.env.AAVE_V4_API_URL || "https://api.v4.aave.com/graphql";
 
+/** Ethereum + Base. Base is where the Coinbase Stocks hub lives. */
+export const V4_DEFAULT_CHAIN_IDS = [1, 8453] as const;
+
+export function v4ChainIds(chainId?: number): number[] {
+  return chainId != null ? [chainId] : [...V4_DEFAULT_CHAIN_IDS];
+}
+
+function chainIdsFilter(chainId?: number): string {
+  return `chainIds: [${v4ChainIds(chainId).join(", ")}]`;
+}
+
 export class AaveV4ApiError extends Error {
   constructor(
     message: string,
@@ -17,7 +28,7 @@ export class AaveV4ApiError extends Error {
   }
 }
 
-async function gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+export async function aaveV4Gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const body: Record<string, unknown> = { query };
   if (variables) body.variables = variables;
 
@@ -53,6 +64,10 @@ async function gql<T>(query: string, variables?: Record<string, unknown>): Promi
   return json.data;
 }
 
+async function gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  return aaveV4Gql<T>(query, variables);
+}
+
 // ---------------------------------------------------------------------------
 // Reusable GraphQL fragments — match the AaveKit schema as of 2026-04
 // ---------------------------------------------------------------------------
@@ -75,7 +90,7 @@ const EXCHANGE_FLAT = `value name symbol`;
 // Hubs
 // ---------------------------------------------------------------------------
 export async function getV4Hubs(chainId?: number): Promise<unknown> {
-  const filter = chainId ? `chainIds: [${chainId}]` : `chainIds: [1]`;
+  const filter = chainIdsFilter(chainId);
   return gql(`{
     hubs(request: { query: { ${filter} } }) {
       id name address
@@ -93,7 +108,7 @@ export async function getV4Hubs(chainId?: number): Promise<unknown> {
 // Spokes
 // ---------------------------------------------------------------------------
 export async function getV4Spokes(chainId?: number): Promise<unknown> {
-  const filter = chainId ? `chainIds: [${chainId}]` : `chainIds: [1]`;
+  const filter = chainIdsFilter(chainId);
   return gql(`{
     spokes(request: { query: { ${filter} } }) {
       id name address chain { name chainId }
@@ -105,7 +120,7 @@ export async function getV4Spokes(chainId?: number): Promise<unknown> {
 // Reserves
 // ---------------------------------------------------------------------------
 export async function getV4Reserves(chainId?: number): Promise<unknown> {
-  const filter = chainId ? `chainIds: [${chainId}]` : `chainIds: [1]`;
+  const filter = chainIdsFilter(chainId);
   return gql(`{
     reserves(request: {
       query: { ${filter} },
@@ -230,8 +245,8 @@ export async function getV4ProtocolHistory(window: string = "LAST_WEEK"): Promis
 // ---------------------------------------------------------------------------
 export async function getV4UserPositions(user: string, chainId?: number): Promise<unknown> {
   // UserPositionsRequestFilter is a oneof input — must have exactly ONE field.
-  // Default to mainnet if not specified.
-  const filter: Record<string, unknown> = { chainIds: [chainId || 1] };
+  // Omit chainId to cover Ethereum + Base (Coinbase Stocks included).
+  const filter: Record<string, unknown> = { chainIds: v4ChainIds(chainId) };
   return gql(
     `query ($request: UserPositionsRequest!) {
       userPositions(request: $request) {
@@ -281,9 +296,7 @@ export async function getV4UserSummary(user: string, chainId?: number): Promise<
 // UserSupplyItem fields: id, reserve, principal, balance, withdrawable,
 //                       interest, isCollateral, createdAt
 export async function getV4UserSupplies(user: string, chainId?: number): Promise<unknown> {
-  const query: Record<string, unknown> = chainId
-    ? { userChains: { user, chainIds: [chainId] } }
-    : { userChains: { user, chainIds: [1] } };
+  const query: Record<string, unknown> = { userChains: { user, chainIds: v4ChainIds(chainId) } };
   return gql(
     `query ($request: UserSuppliesRequest!) {
       userSupplies(request: $request) {
@@ -314,9 +327,7 @@ export async function getV4UserSupplies(user: string, chainId?: number): Promise
 
 // UserBorrowItem fields: id, reserve, principal, debt, interest, createdAt
 export async function getV4UserBorrows(user: string, chainId?: number): Promise<unknown> {
-  const query: Record<string, unknown> = chainId
-    ? { userChains: { user, chainIds: [chainId] } }
-    : { userChains: { user, chainIds: [1] } };
+  const query: Record<string, unknown> = { userChains: { user, chainIds: v4ChainIds(chainId) } };
   return gql(
     `query ($request: UserBorrowsRequest!) {
       userBorrows(request: $request) {
@@ -351,7 +362,7 @@ export async function getV4UserBorrows(user: string, chainId?: number): Promise<
 export async function getV4UserBalances(user: string, chainId?: number): Promise<unknown> {
   const filter: Record<string, unknown> = {
     chains: {
-      chainIds: chainId ? [chainId] : [1],
+      chainIds: v4ChainIds(chainId),
       byReservesType: "ALL",
     },
   };
@@ -381,39 +392,132 @@ export async function getV4UserBalances(user: string, chainId?: number): Promise
 // ---------------------------------------------------------------------------
 // User activities (transaction history)
 // ---------------------------------------------------------------------------
-export async function getV4UserActivities(user: string, chainId?: number): Promise<unknown> {
-  const query: Record<string, unknown> = chainId
-    ? { chainIds: [chainId] }
-    : { chainIds: [1] };
+export const V4_ACTIVITY_TYPES = [
+  "SUPPLY",
+  "BORROW",
+  "REPAY",
+  "WITHDRAW",
+  "LIQUIDATED",
+  "SET_AS_COLLATERAL",
+  "UPDATED_DYNAMIC_CONFIG",
+  "UPDATED_RISK_PREMIUM",
+  "TOKEN_TO_TOKEN_SWAP",
+  "SUPPLY_SWAP",
+  "BORROW_SWAP",
+  "REPAY_WITH_SUPPLY",
+  "WITHDRAW_SWAP",
+  "LEVERAGE",
+] as const;
+
+export type V4ActivityType = (typeof V4_ACTIVITY_TYPES)[number];
+
+const ACTIVITY_ITEMS = `
+  __typename
+  ... on SupplyActivity { id user timestamp txHash chain { name chainId } spoke { name } supplied { amount { value decimals } exchange(currency: USD) { value symbol } token { address info { symbol decimals } } } }
+  ... on BorrowActivity { id user timestamp txHash chain { name chainId } spoke { name } borrowed { amount { value decimals } exchange(currency: USD) { value symbol } token { address info { symbol decimals } } } }
+  ... on RepayActivity { id user timestamp txHash chain { name chainId } spoke { name } repaid { amount { value decimals } exchange(currency: USD) { value symbol } token { address info { symbol decimals } } } }
+  ... on WithdrawActivity { id user timestamp txHash chain { name chainId } spoke { name } withdrawn { amount { value decimals } exchange(currency: USD) { value symbol } token { address info { symbol decimals } } } }
+  ... on LiquidatedActivity { id user timestamp txHash chain { name chainId } liquidator liquidationHealthFactor debt { amount { value } exchange(currency: USD) { value symbol } token { info { symbol } } } collateral { amount { value } exchange(currency: USD) { value symbol } token { info { symbol } } } }
+  ... on UsingAsCollateralActivity { id user timestamp txHash chain { name chainId } spoke { name } enabledAsCollateral reserve { id asset { underlying { info { symbol } } } } }
+  ... on UpdatedDynamicConfigActivity { id user timestamp txHash chain { name chainId } collateralFactor { before { normalized } after { normalized } } maxLiquidationBonus { before { normalized } after { normalized } } }
+  ... on UpdatedRiskPremiumActivity { id user timestamp txHash chain { name chainId } spoke { name } premium { before { normalized } after { normalized } } }
+  ... on TokenSwapActivity { id user timestamp txHash chain { name chainId } orderClass kind status sell { ... on Erc20Amount { amount { value } token { info { symbol } } } } buy { ... on Erc20Amount { amount { value } token { info { symbol } } } } }
+  ... on SupplySwapActivity { id user timestamp txHash chain { name chainId } orderClass kind status sell { reserve { id } amount { amount { value } token { info { symbol } } } } buy { reserve { id } amount { amount { value } token { info { symbol } } } } }
+  ... on BorrowSwapActivity { id user timestamp txHash chain { name chainId } orderClass kind status sell { reserve { id } amount { amount { value } exchange(currency: USD) { value } token { info { symbol } } } } buy { reserve { id } amount { amount { value } exchange(currency: USD) { value } token { info { symbol } } } } }
+  ... on RepayWithSupplyActivity { id user timestamp txHash chain { name chainId } orderClass kind status repay { amount { amount { value } token { info { symbol } } } } supply { amount { amount { value } token { info { symbol } } } } }
+  ... on WithdrawSwapActivity { id user timestamp txHash chain { name chainId } orderClass kind status withdraw { amount { amount { value } token { info { symbol } } } } }
+  ... on LeverageActivity { id user timestamp txHash chain { name chainId } orderClass status multiplier collateral { amount { amount { value } token { info { symbol } } } } debt { amount { amount { value } token { info { symbol } } } } }
+`;
+
+export async function getV4UserActivities(
+  user: string,
+  chainId?: number,
+  types?: readonly string[],
+  pageSize: "TEN" | "FIFTY" = "TEN"
+): Promise<unknown> {
+  const selected = (types && types.length > 0 ? types : V4_ACTIVITY_TYPES).map((t) => t.toUpperCase());
+  const unknown = selected.filter((t) => !(V4_ACTIVITY_TYPES as readonly string[]).includes(t));
+  if (unknown.length > 0) {
+    throw new AaveV4ApiError(`Unknown activity type(s): ${unknown.join(", ")}. Allowed: ${V4_ACTIVITY_TYPES.join(", ")}`);
+  }
   return gql(
     `query ($request: ActivitiesRequest!) {
       activities(request: $request) {
-        items {
-          __typename
-          ... on SupplyActivity {
-            id timestamp txHash
-            chain { name chainId }
-            spoke { name }
-            supplied { amount { value } exchange { ${EXCHANGE_FLAT} } token { ${TOKEN_FIELDS} } }
-          }
-          ... on BorrowActivity {
-            id timestamp txHash
-            chain { name chainId }
-            spoke { name }
-            borrowed { amount { value } exchange { ${EXCHANGE_FLAT} } token { ${TOKEN_FIELDS} } }
-          }
-        }
+        items { ${ACTIVITY_ITEMS} }
         pageInfo { next prev }
       }
     }`,
     {
       request: {
-        query,
+        query: { chainIds: v4ChainIds(chainId) },
         user,
-        types: ["SUPPLY", "BORROW"],
-        pageSize: "TEN",
+        types: selected,
+        pageSize,
       },
     }
+  );
+}
+
+const QUOTE_AMOUNT = `
+  __typename
+  ... on Erc20Amount {
+    amount { value decimals }
+    exchange(currency: USD) { value symbol }
+    token { address info { symbol decimals } }
+  }
+  ... on NativeAmount {
+    amount { value decimals }
+    exchange(currency: USD) { value symbol }
+    token { info { symbol } chain { chainId } }
+  }
+`;
+
+/**
+ * Read-only borrow-swap quote. The selection omits quoteId and approvals so
+ * the payload cannot be submitted as an order.
+ */
+export async function getV4BorrowSwapQuote(input: {
+  debtPosition: string;
+  buyReserve: string;
+  amount: string;
+  user: string;
+  selectedSlippage?: string;
+  accuracy?: "FAST" | "ACCURATE";
+}): Promise<unknown> {
+  const market: Record<string, unknown> = {
+    accuracy: input.accuracy ?? "FAST",
+    debtPosition: input.debtPosition,
+    buyReserve: input.buyReserve,
+    amount: input.amount,
+    user: input.user,
+  };
+  if (input.selectedSlippage != null) market.selectedSlippage = input.selectedSlippage;
+  return gql(
+    `query ($request: BorrowSwapQuoteRequest!) {
+      borrowSwapQuote(request: $request) {
+        __typename
+        ... on PositionSwapByIntentApprovalsRequired {
+          quote {
+            accuracy
+            suggestedSlippage { value normalized }
+            selectedSlippage { value normalized }
+            sell { ${QUOTE_AMOUNT} }
+            buy { ${QUOTE_AMOUNT} }
+            finalSell { ${QUOTE_AMOUNT} }
+            finalBuy { ${QUOTE_AMOUNT} }
+            costs {
+              networkCosts { ${QUOTE_AMOUNT} }
+              partnerFee { ${QUOTE_AMOUNT} }
+              flashloanFee { ${QUOTE_AMOUNT} }
+              providerFee { ${QUOTE_AMOUNT} }
+            }
+          }
+        }
+        ... on InsufficientLiquidityError { reason }
+        ... on AmountTooSmallError { reason }
+      }
+    }`,
+    { request: { market } }
   );
 }
 

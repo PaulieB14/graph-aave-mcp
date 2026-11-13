@@ -26,7 +26,7 @@ const HAS_KEY = Boolean(process.env.GRAPH_API_KEY);
  * blocked or rate-limited on many networks. Probe once and skip rather than
  * reporting a red suite for something the code cannot control.
  */
-const RPC_TOOLS = new Set(["get_live_user_account_data", "get_live_reserve_detail"]);
+const RPC_TOOLS = new Set(["get_live_user_account_data", "get_live_reserve_detail", "get_oracle_status"]);
 async function rpcReachable() {
   const url = process.env.ETHEREUM_RPC_URL;
   try {
@@ -94,9 +94,18 @@ const ARGS = {
   get_v4_user_supplies: { userAddress: WHALE },
   get_v4_user_borrows: { userAddress: WHALE },
   get_v4_user_balances: { userAddress: WHALE },
-  get_v4_user_activities: { userAddress: WHALE },
+  get_v4_user_activities: { userAddress: WHALE, types: ["SUPPLY", "BORROW"], pageSize: "TEN" },
   get_v4_claimable_rewards: { userAddress: WHALE },
   get_v4_swap_quote: { sellTokenAddress: USDC, buyTokenAddress: WETH, sellAmount: "1000000", userAddress: WHALE },
+  get_v4_loan_swaps: { limit: 5, windowHours: 24 * 30 },
+  get_v4_loan_swap_stats: { windowHours: 24 * 30 },
+  get_v4_borrow_swap_quote: {
+    debtPositionId: "MTo6MHg5NGU3QTVkQ2JFODE2ZTQ5OGI4OWFCNzUyNjYxOTA0RTJGNTZjNDg1OjoweDQ2MDRGY0ExNDUxRmIxNkJEODZCMTA4MzVENTY5RTllNzBjNDMyN0Q6Ojc=",
+    buyReserveId: "MTo6MHg5NGU3QTVkQ2JFODE2ZTQ5OGI4OWFCNzUyNjYxOTA0RTJGNTZjNDg1Ojow",
+    amount: "100",
+    userAddress: "0x4604FcA1451Fb16BD86B10835D569E9e70c4327D",
+    accuracy: "FAST",
+  },
   get_v4_hub_flows: { limit: 3 },
   get_v4_user_risk_trajectory: { userAddress: WHALE, limit: 3 },
   get_v4_liquidation_postmortem: { userAddress: WHALE, limit: 3 },
@@ -109,6 +118,8 @@ const ARGS = {
   get_v4_hub_daily_flows: { days: 7 },
   get_v4_user_activity: { user: "0x23cad661e2c5f4290a9d1b08209a2a03d7426e29", limit: 3 },
   get_v4_treasury_events: { limit: 3 },
+  simulate_stock_gap_shock: { gapPct: -10, limit: 5 },
+  get_oracle_status: {},
 };
 
 /**
@@ -129,6 +140,7 @@ const EXPECT_DATA = new Set([
   "get_v4_hubs", "get_v4_spokes", "get_v4_reserves", "get_v4_chains",
   "get_v4_protocol_history", "get_v4_hub_flows",
   "get_v4_recent_liquidations", "get_v4_hub_assets", "get_v4_config_changes", "get_v4_hub_daily_flows",
+  "get_v4_loan_swaps", "get_v4_loan_swap_stats", "get_oracle_status",
 ]);
 
 /** Tools that cannot pass right now, with the reason. Keeps the run green
@@ -146,6 +158,7 @@ const NEEDS_KEY = new Set([
   "get_v4_hub_flows","get_v4_user_risk_trajectory","get_v4_liquidation_postmortem",
   "get_v4_treasury_flows","get_v4_spoke_config_history",
   "get_v4_recent_liquidations","get_v4_hub_assets","get_v4_config_changes","get_v4_hub_daily_flows","get_v4_user_activity","get_v4_treasury_events",
+  "simulate_stock_gap_shock",
 ]);
 
 const proc = spawn("node", ["build/index.js"], { stdio: ["pipe", "pipe", "pipe"] });
