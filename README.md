@@ -11,9 +11,18 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 51 tools across 18 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 62 tools across 18 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
 
-Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, rewards, and protocol history.
+Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, loan swaps, Base equity gap shock, rewards, and protocol history.
+
+## What's new
+
+- V3 available liquidity is aToken supply minus debt, and reserve answers include `_freshness` (block, timestamp, lag seconds)
+- V3 APYs are compounded to match the Aave UI; `supplyAPR` keeps the linear ray figure
+- V4 hub, reserve, and user reads default to Ethereum and Base
+- Live reserve reads try multiple public RPCs and back off on HTTP 429
+- `simulate_stock_gap_shock` and `get_oracle_status` for the Base Coinbase stocks hub
+- `get_v4_loan_swaps`, `get_v4_loan_swap_stats`, and a read-only `get_v4_borrow_swap_quote`
 
 </div>
 
@@ -37,9 +46,10 @@ claude mcp add graph-aave -- npx -y graph-aave-mcp
 # Set Graph API key for subgraph tools (V4 tools work without it)
 export GRAPH_API_KEY=your-key-here
 
-# Optional but recommended: the two live on-chain tools read via RPC, and the
-# unconfigured public fallback is rate-limited or blocked on many networks.
+# Optional but recommended: live on-chain tools try public RPCs first, and
+# those endpoints are rate-limited. A dedicated URL is still the reliable path.
 export ETHEREUM_RPC_URL=https://your-endpoint
+export BASE_RPC_URL=https://your-base-endpoint
 ```
 
 <details>
@@ -86,8 +96,8 @@ Free Graph API key: [thegraph.com/studio](https://thegraph.com/studio/) (100K qu
 
 | Tool | Description |
 |------|-------------|
-| `get_aave_reserves` | All active markets — TVL, supply/borrow APY, LTV, liquidation thresholds |
-| `get_aave_reserve` | Deep detail on one asset: lifetime stats, config, token addresses |
+| `get_aave_reserves` | All active markets — TVL, compounded supply/borrow APY, derived available liquidity, LTV |
+| `get_aave_reserve` | Deep detail on one asset: lifetime stats, config, token addresses, `_freshness` lag |
 | `get_reserve_rate_history` | Historical APY, utilization, TVL snapshots |
 
 ### User Positions
@@ -181,7 +191,9 @@ Real-time liquidation risk monitoring with health factors, risk scores (0–100)
 
 ## V4 Tools (Aave API)
 
-17 tools powered by `api.v4.aave.com/graphql`. **No API key needed.** (`api.aave.com/graphql` is an alias for the same schema; override either with `AAVE_V4_API_URL`.)
+16 tools powered by `api.v4.aave.com/graphql`. **No API key needed.** (`api.aave.com/graphql` is an alias for the same schema; override either with `AAVE_V4_API_URL`.)
+
+Hub, spoke, reserve, and user reads default to **Ethereum + Base**. Pass `chainId` to narrow. `get_v4_user_summary` still aggregates every chain when `chainId` is omitted.
 
 > **Note:** the V4 Omnigraph tools (next section) cover gaps the REST API doesn't expose and **require `GRAPH_API_KEY`**. The 16 tools listed below remain key-free.
 
@@ -207,9 +219,28 @@ Real-time liquidation risk monitoring with health factors, risk scores (0–100)
 | `get_v4_user_supplies` | Supply positions with principal and interest |
 | `get_v4_user_borrows` | Borrow positions with debt breakdown |
 | `get_v4_user_balances` | Cross-chain token holdings with best APYs per token |
-| `get_v4_user_activities` | Transaction history: supplies, borrows, repays, liquidations, swaps |
+| `get_v4_user_activities` | Transaction history. `types` is optional and defaults to every activity, including `BORROW_SWAP` |
 | `get_v4_claimable_rewards` | Claimable Merkl and points rewards |
 | `get_v4_swap_quote` | Read-only swap pricing via CoW Protocol (MEV-protected) |
+
+## Loan swaps (Aave V4 borrow swaps)
+
+3 read-only tools. Loan swaps went live on 2026-11-12 for V4 Ethereum, Base, and Avalanche on Aave Pro, routed through CoW Swap. The API records `ActivityType.BORROW_SWAP`. The V4 subgraphs have no swap entity; the same transaction is a `REPAY` plus a `BORROW`.
+
+| Tool | Description |
+|------|-------------|
+| `get_v4_loan_swaps` | Recent loan swaps (from-asset, to-asset, amounts, user, tx, time, chain). Optional `chainId` and `user`. Cross-checks Ethereum and Base subgraphs. |
+| `get_v4_loan_swap_stats` | Windowed totals: top from→to pairs, USD volume, unique users |
+| `get_v4_borrow_swap_quote` | Pricing quote only. Does not prepare or sign an order |
+
+## Base equities (gap shock + oracle status)
+
+2 tools for the Coinbase tokenized-stock hub on Base. The health-factor model is simplified (`collateralUsd × (1+gap) × collateralFactor / debtUsd`) and is not an Aave liquidation quote.
+
+| Tool | Description |
+|------|-------------|
+| `simulate_stock_gap_shock` | Monday-open gap on AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, TSLAc, SPCXc. Needs `GRAPH_API_KEY`. |
+| `get_oracle_status` | Chainlink 24/5 feeds for TSLAc, NVDAc, and AAPLc. Flags a feed that updates during the Friday 20:00–Sunday 20:00 ET freeze. |
 
 ---
 
@@ -330,7 +361,7 @@ chain". Every backend call now fails loudly instead.
 | Variable | Needed for | Notes |
 |---|---|---|
 | `GRAPH_API_KEY` | all subgraph + Omnigraph tools | [Free key](https://thegraph.com/studio/apikeys/). V4 AaveKit tools work without it. |
-| `ETHEREUM_RPC_URL` (and `BASE_`, `ARBITRUM_`, `POLYGON_`, `OPTIMISM_`, `AVALANCHE_`) | the two live on-chain tools | Optional but recommended — the unconfigured public fallback is rate-limited or blocked on many networks. |
+| `ETHEREUM_RPC_URL` (and `BASE_`, `ARBITRUM_`, `POLYGON_`, `OPTIMISM_`, `AVALANCHE_`) | live on-chain tools and `get_oracle_status` | Optional. When unset, several public RPCs are tried in order with backoff. A dedicated URL is still what you want in production. |
 | `AAVE_V4_API_URL` | V4 AaveKit tools | Defaults to `https://api.v4.aave.com/graphql`. |
 | `AAVE_V4_ETHEREUM_SUBGRAPH_ID` | V4 Ethereum / Omnigraph tools | Defaults to subgraph `2Gu5HCAnWrNk2pXidscdhNEQhrwLgMKmssuCe9JhZhAe` (queried by subgraph ID, follows republishes). |
 | `AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID` | V4 Ethereum / Omnigraph tools | Optional: pin a specific deployment (IPFS hash) instead of the subgraph ID. |

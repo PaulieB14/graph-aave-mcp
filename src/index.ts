@@ -5,6 +5,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createRequire } from "node:module";
 import { z } from "zod";
 import { queryChain } from "./graphClient.js";
+import { humanAmount } from "./format.js";
+import { rayToApyNumber } from "./rates.js";
+import { annotateReserves, attachSubgraphMeta, availableRawUnits } from "./reserveAnnotate.js";
 import { CHAINS, CHAIN_NAMES, LENDING_CHAIN_NAMES } from "./subgraphs.js";
 import {
   LIQUIDATION_RISK_CHAINS,
@@ -34,6 +37,8 @@ import {
   getV4UserActivities,
   getV4ClaimableRewards,
   getV4SwapQuote,
+  getV4BorrowSwapQuote,
+  V4_ACTIVITY_TYPES,
 } from "./aaveV4Api.js";
 import { RPC_CHAIN_NAMES, rpcHint } from "./rpcClient.js";
 import {
@@ -58,6 +63,10 @@ import {
   getRecentLiquidations, getHubAssets, getConfigChanges, getHubDailyFlows,
   getUserActivity, getTreasuryEvents,
 } from "./v4Subgraph.js";
+import { aggregateLoanSwaps, loadLoanSwaps } from "./loanSwaps.js";
+import { fetchBaseStocksSnapshot } from "./stocksSnapshot.js";
+import { gapsFromPct, simulateGapShock, STOCKS, marketState } from "./stocksGap.js";
+import { getOracleStatus } from "./oracleStatus.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version: string };
@@ -93,23 +102,6 @@ const server = new McpServer({
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Format a raw token amount (BigInt string + decimals) into human-readable form */
-function humanAmount(raw: string, decimals: number, symbol = ""): string {
-  const n = Number(raw) / Math.pow(10, decimals);
-  let formatted: string;
-  if (Math.abs(n) >= 1e9) formatted = (n / 1e9).toFixed(2) + "B";
-  else if (Math.abs(n) >= 1e6) formatted = (n / 1e6).toFixed(2) + "M";
-  else if (Math.abs(n) >= 1e3) formatted = (n / 1e3).toFixed(2) + "K";
-  else if (Math.abs(n) >= 1) formatted = n.toFixed(4);
-  else formatted = n.toFixed(8);
-  return symbol ? formatted + " " + symbol : formatted;
-}
-
-/** Convert a RAY-unit rate (1e27) to APY percentage string */
-function rayToAPY(raw: string): string {
-  return (Number(raw) / 1e27 * 100).toFixed(2) + "%";
-}
 
 function textResult(data: unknown) {
   return {
@@ -249,124 +241,7 @@ function shapeReserves(
   return d;
 }
 
-function annotateReserves(data: unknown): unknown {
-  if (!data || typeof data !== "object") return data;
-  const d = data as Record<string, unknown>;
 
-  // Works for both { reserves: [...] } and { markets: [...] } shapes
-  const key = Array.isArray(d["reserves"])
-    ? "reserves"
-    : Array.isArray(d["markets"])
-    ? "markets"
-    : null;
-  if (!key) return data;
-
-  const reserves = d[key] as Array<Record<string, unknown>>;
-  const now = new Date();
-  const flagged: string[] = [];
-
-  for (const reserve of reserves) {
-    const warnings: string[] = [];
-    const symbol = (reserve["symbol"] ?? reserve["name"] ?? "") as string;
-    const decimals = Number(reserve["decimals"] ?? 18);
-    const rawLiq = reserve["totalLiquidity"] as string | undefined;
-    const rawUtil = reserve["utilizationRate"] as string | undefined;
-
-    if (rawLiq !== undefined) {
-      const liq = Number(rawLiq);
-      if (!isNaN(liq) && liq < 0) {
-        const humanLiq = (liq / Math.pow(10, decimals)).toFixed(2);
-        warnings.push(
-          `NEGATIVE_LIQUIDITY (${humanLiq}): debt exceeds deposits — ` +
-          `accounting artifact from token migration or interest accrual timing. ` +
-          `Do not treat this as real TVL.`
-        );
-      }
-    }
-
-    if (rawUtil !== undefined) {
-      const util = Number(rawUtil);
-      if (!isNaN(util)) {
-        if (util > 1.0) {
-          warnings.push(
-            `OVER_UTILIZED (${(util * 100).toFixed(1)}%): utilization >100% is impossible in a healthy pool — ` +
-            `accounting artifact, typically from token migrations where debt persists after supply is removed.`
-          );
-        } else if (util < -0.05) {
-          // Only flag significant negative util (>5%), minor ones are timing noise
-          warnings.push(
-            `NEGATIVE_UTILIZATION (${(util * 100).toFixed(2)}%): interest accrual or accounting artifact — ` +
-            `ignore for rate calculations. Actual utilization is effectively 0%.`
-          );
-        }
-      }
-    }
-
-    // Pendle PT token maturity check
-    if (symbol.startsWith("PT-")) {
-      const maturity = parsePTMaturity(symbol);
-      if (maturity && maturity < now) {
-        const dateStr = maturity.toLocaleDateString("en-US", {
-          year: "numeric", month: "short", day: "numeric",
-        });
-        warnings.push(
-          `EXPIRED_PENDLE_PT (matured ${dateStr}): this principal token has passed maturity. ` +
-          `It now trades at par and its risk profile has fundamentally changed. ` +
-          `The near-zero liquidation threshold (${reserve["reserveLiquidationThreshold"] ?? "?"}bps) ` +
-          `means positions cannot be effectively liquidated.`
-        );
-      }
-    }
-
-    if (warnings.length > 0) {
-      reserve["_dataQualityWarnings"] = warnings;
-      flagged.push(symbol);
-    }
-
-    // Always add _humanReadable for AAVE-native reserves (not Messari markets)
-    if (reserve["totalLiquidity"] !== undefined) {
-      const h: Record<string, unknown> = {};
-      const lr = reserve["liquidityRate"] as string | undefined;
-      const vbr = reserve["variableBorrowRate"] as string | undefined;
-      const sbr = reserve["stableBorrowRate"] as string | undefined;
-      const rawUtil = reserve["utilizationRate"] as string | undefined;
-      const rawLiq = reserve["totalLiquidity"] as string | undefined;
-      const rawAvail = reserve["availableLiquidity"] as string | undefined;
-      const baseLTV = reserve["baseLTVasCollateral"] as string | undefined;
-      const liqThresh = reserve["reserveLiquidationThreshold"] as string | undefined;
-      const liqBonus = reserve["reserveLiquidationBonus"] as string | undefined;
-
-      if (lr) h["supplyAPY"] = rayToAPY(lr);
-      if (vbr) h["variableBorrowAPY"] = rayToAPY(vbr);
-      if (sbr && Number(sbr) > 0) h["stableBorrowAPY"] = rayToAPY(sbr);
-
-      if (rawUtil !== undefined) {
-        const u = Number(rawUtil);
-        h["utilization"] = (!isNaN(u) && u >= 0 && u <= 1)
-          ? (u * 100).toFixed(1) + "%" : "anomalous (see _dataQualityWarnings)";
-      }
-      if (rawLiq !== undefined) h["totalLiquidity"] = humanAmount(rawLiq, decimals, symbol);
-      if (rawAvail !== undefined) h["availableLiquidity"] = humanAmount(rawAvail, decimals, symbol);
-      if (baseLTV !== undefined) h["maxLTV"] = (Number(baseLTV) / 100).toFixed(2) + "%";
-      if (liqThresh !== undefined) h["liquidationThreshold"] = (Number(liqThresh) / 100).toFixed(2) + "%";
-      if (liqBonus !== undefined) {
-        const penalty = (Number(liqBonus) / 100 - 100).toFixed(2);
-        if (Number(penalty) > 0) h["liquidationPenalty"] = penalty + "%";
-      }
-      reserve["_humanReadable"] = h;
-    }
-  }
-
-  if (flagged.length > 0) {
-    d["_anomalousReserves"] = flagged;
-    d["_dataQualityNote"] =
-      `${flagged.length} reserve(s) have data quality warnings (see _dataQualityWarnings on each). ` +
-      `Raw subgraph values are preserved. These are on-chain accounting artifacts, not MCP errors. ` +
-      `Flagged: ${flagged.join(", ")}`;
-  }
-
-  return d;
-}
 
 // ---------------------------------------------------------------------------
 // Position dashboard — synthesizes raw userReserves into human-readable summary
@@ -382,6 +257,9 @@ interface UserReserveRaw {
     price: { priceInEth: string };
     utilizationRate: string;
     availableLiquidity: string;
+    totalATokenSupply?: string;
+    totalCurrentVariableDebt?: string;
+    totalPrincipalStableDebt?: string;
   };
   currentATokenBalance: string;
   currentVariableDebt: string;
@@ -415,8 +293,8 @@ function computePositionDashboard(data: unknown): unknown {
     const hasDebt = debtBal > 1e-12;
     if (!hasSupply && !hasDebt) continue;
 
-    const supplyAPY = Number(r.liquidityRate) / 1e27 * 100;
-    const borrowAPY = Number(r.variableBorrowRate) / 1e27 * 100;
+    const supplyAPY = rayToApyNumber(r.liquidityRate);
+    const borrowAPY = rayToApyNumber(r.variableBorrowRate);
 
     if (ur.usageAsCollateralEnabledOnUser && hasSupply) {
       collateralUSD += supplyBal * priceUSD * liqThreshold;
@@ -428,7 +306,9 @@ function computePositionDashboard(data: unknown): unknown {
     // Withdrawal liquidity check
     const util = Number(r.utilizationRate);
     if (hasSupply && util > 0.95) {
-      const avail = Number(r.availableLiquidity) / Math.pow(10, dec);
+      const derived = availableRawUnits(r as unknown as Record<string, unknown>);
+      const availRaw = derived?.units ?? r.availableLiquidity;
+      const avail = Number(availRaw) / Math.pow(10, dec);
       const withdrawable = Math.min(supplyBal, avail);
       warnings.push(
         `⚠️ ${r.symbol} pool is ${(util * 100).toFixed(0)}% utilized — ` +
@@ -528,9 +408,11 @@ server.registerTool(
       "supply APY, borrow APY, TVL, utilization rate, collateral factors, or " +
       "liquidation thresholds on a specific chain. " +
       "Returns all active reserves sorted by total liquidity (TVL). " +
-      "RATE CONVERSION: liquidityRate and variableBorrowRate are in RAY units (1e27). " +
-      "Supply APY % = liquidityRate / 1e27 * 100. Borrow APY % = variableBorrowRate / 1e27 * 100. " +
-      "Amounts are in native token units — divide by 10^decimals for human-readable. " +
+      "RATE CONVERSION: liquidityRate and variableBorrowRate are RAY (1e27) APR. " +
+      "_humanReadable.supplyAPY and variableBorrowAPY are compounded (Aave UI / official MCP). " +
+      "supplyAPR is the linear ray/1e27 figure. " +
+      "_humanReadable.availableLiquidity is derived (aToken supply − variable − stable debt), " +
+      "not the subgraph's raw availableLiquidity. _freshness.lagSeconds is wall-clock lag vs _meta.block.timestamp. " +
       "Ideal for: 'What assets can I lend on Arbitrum?', 'What is USDC supply rate on Base?', " +
       "'Show me all AAVE V3 markets on Polygon'. " +
       "SIZE: unfiltered this returns every active reserve (~28k tokens on Ethereum). " +
@@ -579,6 +461,7 @@ server.registerTool(
       if (cfg.isMessari) {
         const activeFilter = includeInactive ? "" : ", where: { isActive: true }";
         const query = `{
+          _meta { block { number timestamp } }
           markets(first: 100, orderBy: totalValueLockedUSD, orderDirection: desc${activeFilter}) {
             id
             name
@@ -597,13 +480,15 @@ server.registerTool(
         }`;
         const data = await queryChain(cfg.subgraphId, query);
         return textResult(
-          shapeReserves(annotateReserves(data), { symbols, limit, compact })
+          shapeReserves(annotateReserves(attachSubgraphMeta(data)), { symbols, limit, compact })
         );
       }
 
       const isPausedField = cfg.hasIsPaused !== false ? "\n          isPaused" : "";
+      const updatedField = cfg.hasIsPaused !== false ? "\n          lastUpdateTimestamp" : "";
       const where = includeInactive ? "" : ", where: { isActive: true }";
       const query = `{
+        _meta { block { number timestamp } }
         reserves(first: 100, orderBy: totalLiquidity, orderDirection: desc${where}) {
           id
           symbol
@@ -611,7 +496,7 @@ server.registerTool(
           decimals
           underlyingAsset
           isActive
-          isFrozen${isPausedField}
+          isFrozen${isPausedField}${updatedField}
           borrowingEnabled
           usageAsCollateralEnabled
           availableLiquidity
@@ -634,7 +519,7 @@ server.registerTool(
       }`;
       const data = await queryChain(cfg.subgraphId, query);
       return textResult(
-        shapeReserves(annotateReserves(data), { symbols, limit, compact })
+        shapeReserves(annotateReserves(attachSubgraphMeta(data)), { symbols, limit, compact })
       );
     } catch (error) {
       return errorResult(error);
@@ -654,7 +539,9 @@ server.registerTool(
       "'What is the liquidation threshold for WBTC collateral?'. " +
       "Returns full reserve config: current rates, TVL, LTV, liquidation parameters, " +
       "lifetime stats (total borrows/repayments/liquidations), and token addresses. " +
-      "RATE CONVERSION: divide liquidityRate / variableBorrowRate by 1e27 * 100 for APY %.",
+      "_humanReadable.*APY is compounded (Aave UI style). Raw liquidityRate stays RAY APR. " +
+      "_humanReadable.availableLiquidity is aToken supply minus debt. " +
+      "_freshness.lagSeconds is wall-clock lag versus _meta.block.timestamp.",
     inputSchema: {
       chain: z.enum(LENDING_CHAIN_NAMES).describe("Chain identifier"),
       symbol: z
@@ -671,6 +558,7 @@ server.registerTool(
       // Fantom uses Messari standardized schema (markets, not reserves)
       if (cfg.isMessari) {
         const query = `{
+          _meta { block { number timestamp } }
           markets(where: { name_contains: "${symbol.toUpperCase()}" }, first: 5) {
             id
             name
@@ -688,13 +576,15 @@ server.registerTool(
           }
         }`;
         const data = await queryChain(cfg.subgraphId, query);
-        return textResult(annotateReserves(data));
+        return textResult(annotateReserves(attachSubgraphMeta(data)));
       }
 
       const v3Only = cfg.hasIsPaused !== false;
       const isPausedField = v3Only ? "\n          isPaused" : "";
+      const updatedField = v3Only ? "\n          lastUpdateTimestamp" : "";
       const lifetimeFields = v3Only ? "\n          lifetimeSuppliersInterestEarned\n          lifetimeFlashLoanPremium" : "";
       const query = `{
+        _meta { block { number timestamp } }
         reserves(where: { symbol: "${symbol.toUpperCase()}" }) {
           id
           symbol
@@ -702,7 +592,7 @@ server.registerTool(
           decimals
           underlyingAsset
           isActive
-          isFrozen${isPausedField}
+          isFrozen${isPausedField}${updatedField}
           borrowingEnabled
           usageAsCollateralEnabled
           availableLiquidity
@@ -731,7 +621,7 @@ server.registerTool(
         }
       }`;
       const data = await queryChain(cfg.subgraphId, query);
-      return textResult(annotateReserves(data));
+      return textResult(annotateReserves(attachSubgraphMeta(data)));
     } catch (error) {
       return errorResult(error);
     }
@@ -786,6 +676,9 @@ server.registerTool(
             reserveLiquidationBonus
             utilizationRate
             availableLiquidity
+            totalATokenSupply
+            totalCurrentVariableDebt
+            totalPrincipalStableDebt
             price { priceInEth }
           }
           scaledATokenBalance
@@ -1360,7 +1253,7 @@ server.registerTool(
       "'What was the utilization rate last week?'. " +
       "Returns timestamped snapshots of: liquidityRate, variableBorrowRate, stableBorrowRate, " +
       "utilizationRate, availableLiquidity, totalLiquidity, totalCurrentVariableDebt. " +
-      "Rates are in RAY units (divide by 1e27 * 100 for APY %). " +
+      "Rates are RAY APR (1e27). Compounded APY is ((1 + apr/31536000)^31536000 - 1). " +
       "Get the reserve ID from get_aave_reserves (the 'id' field = underlyingAsset + poolAddress).",
     inputSchema: {
       chain: z.enum(LENDING_CHAIN_NAMES).describe("Chain identifier"),
@@ -1482,6 +1375,9 @@ server.registerTool(
           utilizationRate
           totalLiquidity
           availableLiquidity
+          totalATokenSupply
+          totalCurrentVariableDebt
+          totalPrincipalStableDebt
           price { priceInEth }
         }
       }`;
@@ -1518,11 +1414,12 @@ server.registerTool(
         for (const reserve of reserves) {
           const sym = reserve["symbol"] as string;
           const decimals = Number(reserve["decimals"] ?? 18);
-          const supplyAPY = Number(reserve["liquidityRate"] ?? "0") / 1e27 * 100;
-          const borrowAPY = Number(reserve["variableBorrowRate"] ?? "0") / 1e27 * 100;
+          const supplyAPY = rayToApyNumber(String(reserve["liquidityRate"] ?? "0"));
+          const borrowAPY = rayToApyNumber(String(reserve["variableBorrowRate"] ?? "0"));
           const util = Number(reserve["utilizationRate"] ?? "0");
           const totalLiq = Number(reserve["totalLiquidity"] ?? "0");
-          const availLiq = Number(reserve["availableLiquidity"] ?? "0");
+          const derivedAvail = availableRawUnits(reserve);
+          const availLiq = Number(derivedAvail?.units ?? reserve["availableLiquidity"] ?? "0");
           const rawPrice = Number(
             ((reserve["price"] as Record<string, unknown>)?.["priceInEth"] as string) ?? "0"
           );
@@ -1581,7 +1478,8 @@ server.registerTool(
         side,
         ranked,
         _note:
-          "APYs are current values from AAVE subgraphs and change continuously with utilization. " +
+          "supplyAPY / variableBorrowAPY are compounded (Aave UI style). Raw subgraph rates are APR in RAY. " +
+          "Available liquidity is aToken supply minus debt when those fields are present. " +
           "availLiq_approxUSD: V3 chains use on-chain USD oracle (8 dec); V2 uses ETH oracle × $3,000 estimate. " +
           "Fantom excluded (Messari schema incompatible). V2 legacy chains included.",
       };
@@ -2216,7 +2114,7 @@ server.registerPrompt(
 1. Call get_aave_user_position(chain="${chain}", userAddress="${address}") to get all deposits and borrows
 2. Identify supplied assets: those with currentATokenBalance > 0 (divide by 10^decimals)
 3. Identify borrowed assets: those with currentTotalDebt > 0 (divide by 10^decimals)
-4. Convert liquidityRate / variableBorrowRate from RAY (divide by 1e27 * 100) to show APY %
+4. Read _humanReadable.supplyAPY / variableBorrowAPY (compounded). Raw liquidityRate is RAY APR, not the UI APY.
 5. Estimate health factor: sum(collateral_i * priceEth_i * liqThreshold_i / 10000) / sum(debt_i * priceEth_i)
    (Use priceInEth from each reserve.price — already 18-decimal normalized)
 6. Call get_recent_borrows(chain="${chain}", userAddress="${address}", first=5) for recent history
@@ -2249,7 +2147,7 @@ server.registerPrompt(
           text: `Give a comprehensive overview of AAVE on ${chain}. Steps:
 1. Call list_aave_chains to confirm chain metadata and 30d query volume
 2. Call get_aave_reserves(chain="${chain}") to get all active markets
-3. Convert rates: Supply APY = liquidityRate / 1e27 * 100, Borrow APY = variableBorrowRate / 1e27 * 100
+3. Read _humanReadable.supplyAPY and variableBorrowAPY (compounded to match the Aave UI). Raw rates are RAY APR.
 4. Identify: top 5 reserves by totalLiquidity, highest supply APY assets, highest borrow APY assets
 5. Call get_recent_borrows(chain="${chain}", first=10) for latest borrowing activity
 6. Call get_aave_liquidations(chain="${chain}", first=5) to check recent liquidations
@@ -2280,7 +2178,7 @@ server.registerPrompt(
           text: `Compare AAVE ${symbol.toUpperCase()} rates across all chains. Steps:
 1. Call list_aave_chains to see all V3 chains (focus on ethereum, base, arbitrum, polygon, optimism, avalanche first)
 2. For each chain, call get_aave_reserve(chain=X, symbol="${symbol.toUpperCase()}")
-3. Convert: Supply APY = liquidityRate / 1e27 * 100, Borrow APY = variableBorrowRate / 1e27 * 100
+3. Read _humanReadable.supplyAPY and variableBorrowAPY (compounded). availableLiquidity there is aToken minus debt.
 4. Also collect: totalLiquidity, availableLiquidity, utilizationRate for each chain
 5. Build a comparison table: Chain | Supply APY | Variable Borrow APY | TVL | Utilization %
 6. Highlight: best chain to supply ${symbol}, cheapest chain to borrow ${symbol}, and why rates differ`,
@@ -2358,24 +2256,27 @@ server.registerPrompt(
 // entries to subgraphs.ts.
 // ===========================================================================
 
+const v4ChainDescribe =
+  "Optional chain filter (1=Ethereum, 8453=Base). Omit to query Ethereum + Base (includes the Coinbase Stocks hub).";
+
 // Tool 16: get_v4_hubs
 server.registerTool("get_v4_hubs", {
-  description: "Get Aave V4 liquidity hubs (Core, Plus, Prime) with TVL, utilization, and supply/borrow caps. No API key needed.",
-  inputSchema: { chainId: z.number().optional().describe("Chain ID (1=Ethereum). Defaults to Ethereum.") },
+  description: "Get Aave V4 liquidity hubs (Core, Plus, Prime, and Base Coinbase Stocks) with TVL, utilization, and supply/borrow caps. Defaults to Ethereum + Base. No API key needed.",
+  inputSchema: { chainId: z.number().optional().describe(v4ChainDescribe) },
 }, async ({ chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4Hubs(chainId) }); } catch (e) { return errorResult(e); } });
 
 // Tool 17: get_v4_spokes
 server.registerTool("get_v4_spokes", {
-  description: "Get Aave V4 spokes (Main, Bluechip, Kelp, Lido, Ethena, EtherFi, etc.). Spokes are chain-specific deployment points enabling cross-chain lending. No API key needed.",
-  inputSchema: { chainId: z.number().optional().describe("Chain ID. Defaults to Ethereum.") },
+  description: "Get Aave V4 spokes (Main, Bluechip, Kelp, Lido, Ethena, EtherFi, and Base equities). Spokes are chain-specific deployment points enabling cross-chain lending. Defaults to Ethereum + Base. No API key needed.",
+  inputSchema: { chainId: z.number().optional().describe(v4ChainDescribe) },
 }, async ({ chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4Spokes(chainId) }); } catch (e) { return errorResult(e); } });
 
 // Tool 18: get_v4_reserves
 server.registerTool("get_v4_reserves", {
-  description: "Get Aave V4 reserves with supply/borrow APYs, risk params (collateral factor, caps), and status. Use get_aave_reserves for V2/V3. No API key needed. " +
+  description: "Get Aave V4 reserves with supply/borrow APYs, risk params (collateral factor, caps), and status. Defaults to Ethereum + Base, so Coinbase stock reserves are included unless chainId is set. Use get_aave_reserves for V2/V3. No API key needed. " +
     "SIZE: unfiltered this returns every reserve (~31k tokens). Pass `symbols` for a named asset, or `compact: true` for rates only.",
   inputSchema: {
-    chainId: z.number().optional().describe("Chain ID. Defaults to Ethereum."),
+    chainId: z.number().optional().describe(v4ChainDescribe),
     symbols: z.array(z.string()).optional().describe("Only return these asset symbols, e.g. [\"USDC\",\"WETH\"]. Case-insensitive."),
     limit: z.number().int().min(1).max(200).optional().describe("Max reserves to return. Default all."),
     compact: z.boolean().default(false).describe("Return only symbol, address, spoke and APYs. Cuts the payload ~10x."),
@@ -2443,9 +2344,12 @@ server.registerTool("get_v4_protocol_history", {
 
 // Tool 24: get_v4_user_positions
 server.registerTool("get_v4_user_positions", {
-  description: "Get a user's Aave V4 positions across all spokes — health factor, collateral, debt, borrowing power, net APY. Cross-chain by default. No API key needed.",
-  inputSchema: { userAddress: z.string().describe("EVM wallet address (0x...)") },
-}, async ({ userAddress }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserPositions(userAddress) }); } catch (e) { return errorResult(e); } });
+  description: "Get a user's Aave V4 positions across spokes — health factor, collateral, debt, borrowing power, net APY. Defaults to Ethereum + Base. No API key needed.",
+  inputSchema: {
+    userAddress: z.string().describe("EVM wallet address (0x...)"),
+    chainId: z.number().optional().describe(v4ChainDescribe),
+  },
+}, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserPositions(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
 
 // Tool 25: get_v4_user_summary
 server.registerTool("get_v4_user_summary", {
@@ -2458,7 +2362,7 @@ server.registerTool("get_v4_user_supplies", {
   description: "Get a user's Aave V4 supply positions with principal, interest, and collateral status. No API key needed.",
   inputSchema: {
     userAddress: z.string().describe("EVM wallet address (0x...)"),
-    chainId: z.number().optional().describe("Filter by chain ID"),
+    chainId: z.number().optional().describe(v4ChainDescribe),
   },
 }, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserSupplies(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
 
@@ -2467,24 +2371,35 @@ server.registerTool("get_v4_user_borrows", {
   description: "Get a user's Aave V4 borrow positions with principal, debt, interest. No API key needed.",
   inputSchema: {
     userAddress: z.string().describe("EVM wallet address (0x...)"),
-    chainId: z.number().optional().describe("Filter by chain ID"),
+    chainId: z.number().optional().describe(v4ChainDescribe),
   },
 }, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserBorrows(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
 
 // Tool 28: get_v4_user_balances
 server.registerTool("get_v4_user_balances", {
-  description: "Get a user's cross-chain token balances in Aave V4 with highest supply APY and lowest borrow APY per token. No API key needed.",
-  inputSchema: { userAddress: z.string().describe("EVM wallet address (0x...)") },
-}, async ({ userAddress }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserBalances(userAddress) }); } catch (e) { return errorResult(e); } });
+  description: "Get a user's token balances in Aave V4 with highest supply APY and lowest borrow APY per token. Defaults to Ethereum + Base. No API key needed.",
+  inputSchema: {
+    userAddress: z.string().describe("EVM wallet address (0x...)"),
+    chainId: z.number().optional().describe(v4ChainDescribe),
+  },
+}, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserBalances(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
 
 // Tool 29: get_v4_user_activities
 server.registerTool("get_v4_user_activities", {
-  description: "Get a user's Aave V4 transaction history: supplies, borrows, withdrawals, repayments, liquidations, swaps. No API key needed.",
+  description: "Get a user's Aave V4 transaction history. Defaults to every ActivityType, including BORROW_SWAP, supply/withdraw swaps, repay-with-supply, leverage, liquidations, and collateral toggles. Pass `types` to narrow. Defaults to Ethereum + Base. No API key needed.",
   inputSchema: {
     userAddress: z.string().describe("EVM wallet address (0x...)"),
-    chainId: z.number().optional().describe("Filter by chain ID"),
+    chainId: z.number().optional().describe(v4ChainDescribe),
+    types: z.array(z.enum(V4_ACTIVITY_TYPES)).optional().describe(
+      "Activity types to include. Omit for all types (SUPPLY, BORROW, REPAY, WITHDRAW, LIQUIDATED, SET_AS_COLLATERAL, UPDATED_DYNAMIC_CONFIG, UPDATED_RISK_PREMIUM, TOKEN_TO_TOKEN_SWAP, SUPPLY_SWAP, BORROW_SWAP, REPAY_WITH_SUPPLY, WITHDRAW_SWAP, LEVERAGE)."
+    ),
+    pageSize: z.enum(["TEN", "FIFTY"]).optional().describe("Page size. Default TEN."),
   },
-}, async ({ userAddress, chainId }) => { try { return textResult({ source: "aave-v4-api", data: await getV4UserActivities(userAddress, chainId) }); } catch (e) { return errorResult(e); } });
+}, async ({ userAddress, chainId, types, pageSize }) => {
+  try {
+    return textResult({ source: "aave-v4-api", data: await getV4UserActivities(userAddress, chainId, types, pageSize ?? "TEN") });
+  } catch (e) { return errorResult(e); }
+});
 
 // Tool 30: get_v4_claimable_rewards
 server.registerTool("get_v4_claimable_rewards", {
@@ -2510,6 +2425,91 @@ server.registerTool("get_v4_swap_quote", {
     return textResult({ source: "aave-v4-api", data: await getV4SwapQuote(
       { chainId, address: sellTokenAddress }, { chainId, address: buyTokenAddress }, sellAmount, userAddress
     ) });
+  } catch (e) { return errorResult(e); }
+});
+
+const loanSwapChainDescribe =
+  "Optional chain filter (1=Ethereum, 8453=Base, 43114=Avalanche). Omit for all three chains where Aave loan swaps are live.";
+
+server.registerTool("get_v4_loan_swaps", {
+  description:
+    "Recent Aave V4 loan swaps (borrow swaps), launched 2026-11-12 on Ethereum, Base, and Avalanche via CoW Swap. " +
+    "Reads ActivityType.BORROW_SWAP from the Aave V4 API and cross-checks Ethereum/Base against same-transaction " +
+    "REPAY+BORROW rows in the V4 subgraphs (CoW flash-loan router 0x9da8b48441583a2b93e2ef8213aad0ec0b392c69 and " +
+    "settlement 0x9008D19f58AAbD9eD0D60971565AA8510560ab41). Returns from-asset, to-asset, amounts, user, tx, time, and chain. " +
+    "Read-only. Subgraph cross-check needs GRAPH_API_KEY and is reported in crossCheck.errors when unavailable. Avalanche has no subgraph cross-check.",
+  inputSchema: {
+    chainId: z.number().optional().describe(loanSwapChainDescribe),
+    user: z.string().optional().describe("Optional user address filter (0x...)"),
+    limit: z.number().int().min(1).max(200).optional().describe("Max swaps to return (default 50)"),
+    windowHours: z.number().positive().max(24 * 90).optional().describe("Only swaps newer than this many hours"),
+  },
+}, async ({ chainId, user, limit, windowHours }) => {
+  try {
+    const loaded = await loadLoanSwaps({ chainId, user, limit: limit ?? 50, windowHours, maxPages: 3 });
+    return textResult({
+      source: "aave-v4-api+v4-subgraph",
+      chains: loaded.chains,
+      count: loaded.swaps.length,
+      apiCount: loaded.apiCount,
+      swaps: loaded.swaps,
+      crossCheck: loaded.crossCheck,
+      note: "fromAsset is the debt rotated out of (API sell). toAsset is the debt rotated into (API buy).",
+    });
+  } catch (e) { return errorResult(e); }
+});
+
+server.registerTool("get_v4_loan_swap_stats", {
+  description:
+    "Aggregate Aave V4 loan-swap flow over a time window: swap count, unique users, USD volume of debt rotated out, " +
+    "and the top from-asset → to-asset pairs. Same sources as get_v4_loan_swaps. Read-only.",
+  inputSchema: {
+    chainId: z.number().optional().describe(loanSwapChainDescribe),
+    user: z.string().optional().describe("Optional user address filter"),
+    windowHours: z.number().positive().max(24 * 90).optional().describe("Lookback window in hours. Default 168 (7 days)."),
+  },
+}, async ({ chainId, user, windowHours }) => {
+  try {
+    const hours = windowHours ?? 168;
+    const loaded = await loadLoanSwaps({ chainId, user, windowHours: hours, limit: 500, maxPages: 5 });
+    return textResult({
+      source: "aave-v4-api+v4-subgraph",
+      chains: loaded.chains,
+      ...aggregateLoanSwaps(loaded.swaps, { windowHours: hours }),
+      crossCheck: loaded.crossCheck,
+    });
+  } catch (e) { return errorResult(e); }
+});
+
+server.registerTool("get_v4_borrow_swap_quote", {
+  description:
+    "Read-only Aave V4 loan-swap quote (borrowSwapQuote). Returns sell/buy amounts, slippage, and fee amounts. " +
+    "Does not prepare, sign, or submit an order — quote ids and approvals are not requested. " +
+    "debtPositionId is a UserBorrowItem id from get_v4_user_borrows. buyReserveId is the reserve to rotate into.",
+  inputSchema: {
+    debtPositionId: z.string().describe("UserBorrowItem id of the debt being swapped"),
+    buyReserveId: z.string().describe("Reserve id of the asset to borrow instead"),
+    amount: z.string().describe("Debt amount to swap, decimal string (e.g. \"100\")"),
+    userAddress: z.string().describe("Wallet that owns the debt (0x...)"),
+    selectedSlippage: z.string().optional().describe("Slippage as a decimal fraction string, e.g. \"0.01\" for 1%"),
+    accuracy: z.enum(["FAST", "ACCURATE"]).optional().describe("Quote accuracy. Default FAST."),
+  },
+}, async ({ debtPositionId, buyReserveId, amount, userAddress, selectedSlippage, accuracy }) => {
+  try {
+    const quote = await getV4BorrowSwapQuote({
+      debtPosition: debtPositionId,
+      buyReserve: buyReserveId,
+      amount,
+      user: userAddress,
+      selectedSlippage,
+      accuracy,
+    });
+    return textResult({
+      source: "aave-v4-api",
+      quoteOnly: true,
+      orderPreparation: "omitted",
+      data: quote,
+    });
   } catch (e) { return errorResult(e); }
 });
 
@@ -2923,6 +2923,75 @@ v4Tool("get_v4_treasury_events",
     sinceHours: z.number().positive().optional().describe("Look back N hours (default: all time)"),
     limit: z.number().int().positive().max(200).optional().describe("Max merged rows (default 25)"),
   }, getTreasuryEvents);
+
+server.registerTool("simulate_stock_gap_shock", {
+  description:
+    "Simulate a Monday-open price gap on Aave V4 Base Coinbase tokenized-stock collateral " +
+    `(${STOCKS.join(", ")}). ` +
+    "Health factor is Σ(collateralUsd × (1+gap) × collateralFactor) / debtUsd. V4 risk premium is not applied. " +
+    "Positions are the largest reserve holders from the Aave V4 API; the Base subgraph supplies the block clock. " +
+    "Returns accounts that would be liquidatable (HF<1), debt at risk, the oracle freeze clock, and subgraph freshness. " +
+    "Requires GRAPH_API_KEY. Independent model — not affiliated with Aave; not financial advice.",
+  inputSchema: {
+    gapPct: z.number().min(-50).max(20).default(-10)
+      .describe("Uniform gap percent, e.g. -10 = −10% Monday open. Default −10."),
+    overrides: z.record(z.number()).optional()
+      .describe("Per-symbol gap percent overrides, e.g. {\"TSLAc\": -15}"),
+    minDebtUsd: z.number().optional().default(0),
+    limit: z.number().int().min(1).max(200).optional().default(50),
+  },
+}, async ({ gapPct, overrides, minDebtUsd, limit }) => {
+  try {
+    const snap = await fetchBaseStocksSnapshot();
+    const minDebt = minDebtUsd ?? 0;
+    const accounts = snap.accounts.filter((account) => account.debt >= minDebt);
+    const gaps = gapsFromPct(gapPct, overrides);
+    const shock = simulateGapShock(accounts, snap.params, gaps, limit ?? 50);
+    return textResult({
+      gapPct,
+      gaps,
+      market: marketState(new Date()),
+      _freshness: snap._freshness,
+      sources: snap.sources,
+      coverage: snap.coverage,
+      truncated: snap.truncated,
+      reserves: snap.reserves.map((reserve) => ({
+        symbol: reserve.symbol,
+        collateralFactor: reserve.collateralFactor,
+        maxLiquidationBonus: reserve.maxLiquidationBonus,
+        suppliedUsd: reserve.suppliedUsd,
+        borrowedUsd: reserve.borrowedUsd,
+      })),
+      scannedAccounts: shock.accounts,
+      liquidatableCount: shock.liquidatableCount,
+      debtAtRisk: shock.debtAtRisk,
+      liquidatable: shock.liquidatable,
+      disclaimer: "Simplified HF model for research. Not an Aave liquidation quote and not financial advice.",
+    });
+  } catch (err) {
+    return errorResult(err);
+  }
+});
+
+server.registerTool("get_oracle_status", {
+  description:
+    "Check Base Chainlink 24/5 US equity feeds used by Aave V4 Coinbase Stocks (TSLAc, NVDAc, AAPLc). " +
+    "Reports the latest round timestamp, whether oracles should be frozen (Friday 20:00–Sunday 20:00 ET), " +
+    "and flags anomaly=weekend_update if a feed updated during that freeze (possible move to 24/7). " +
+    "US market holidays are not on this clock. Uses Base RPC (set BASE_RPC_URL; public fallbacks are tried).",
+  inputSchema: {
+    asOf: z.string().datetime({ offset: true }).optional()
+      .describe("ISO time to evaluate the freeze window; default now"),
+  },
+}, async ({ asOf }) => {
+  try {
+    return textResult(await getOracleStatus(asOf ? new Date(asOf) : undefined));
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    error.message = error.message + rpcHint("base");
+    return errorResult(error);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Start server

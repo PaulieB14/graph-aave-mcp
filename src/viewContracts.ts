@@ -9,7 +9,8 @@
  */
 
 import { parseAbi, getAddress } from "viem";
-import { rpcClient, rpcAddresses, rpcChainId } from "./rpcClient.js";
+import { rpcClient, rpcAddresses, rpcChainId, withRpcRetry } from "./rpcClient.js";
+import { rayToAPR, rayToAPY } from "./rates.js";
 
 /** Coerce any 0x-prefixed hex (mixed/lower/upper) to checksummed form viem accepts. */
 function addr(input: string): `0x${string}` {
@@ -81,6 +82,13 @@ export async function getLiveUserAccountData(
   chainKey: string,
   userAddress: string
 ) {
+  return withRpcRetry(chainKey, async () => getLiveUserAccountDataOnce(chainKey, userAddress));
+}
+
+async function getLiveUserAccountDataOnce(
+  chainKey: string,
+  userAddress: string
+) {
   const client = rpcClient(chainKey);
   const { POOL } = rpcAddresses(chainKey);
 
@@ -138,6 +146,13 @@ export async function getLiveUserAccountData(
  * stalling, but the fix is to set the env var — the error text says so.
  */
 export async function getLiveReserveDetail(
+  chainKey: string,
+  assetAddress: string
+) {
+  return withRpcRetry(chainKey, async () => getLiveReserveDetailOnce(chainKey, assetAddress));
+}
+
+async function getLiveReserveDetailOnce(
   chainKey: string,
   assetAddress: string
 ) {
@@ -205,8 +220,8 @@ export async function getLiveReserveDetail(
   const [aTokenAddress, stableDebtTokenAddress, variableDebtTokenAddress] = tokens;
   const [borrowCap, supplyCap] = caps;
 
-  const rayToApyPct = (r: bigint) =>
-    `${(Number(r) / 1e27 * 100).toFixed(4)}%`;
+  const rayToApyPct = (r: bigint) => rayToAPY(r, 4);
+  const rayToAprPct = (r: bigint) => rayToAPR(r, 4);
 
   return stampAsOf(chainKey, {
     asset,
@@ -218,10 +233,13 @@ export async function getLiveReserveDetail(
       totalVariableDebt: totalVariableDebt.toString(),
       liquidityRate: liquidityRate.toString(),
       supplyApy: rayToApyPct(liquidityRate),
+      supplyApr: rayToAprPct(liquidityRate),
       variableBorrowRate: variableBorrowRate.toString(),
       variableBorrowApy: rayToApyPct(variableBorrowRate),
+      variableBorrowApr: rayToAprPct(variableBorrowRate),
       stableBorrowRate: stableBorrowRate.toString(),
       stableBorrowApy: rayToApyPct(stableBorrowRate),
+      stableBorrowApr: rayToAprPct(stableBorrowRate),
       averageStableBorrowRate: averageStableBorrowRate.toString(),
       liquidityIndex: liquidityIndex.toString(),
       variableBorrowIndex: variableBorrowIndex.toString(),

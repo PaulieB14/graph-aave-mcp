@@ -16,8 +16,9 @@ export interface ChainConfig {
 // Lending protocol schema (V3): reserves, userReserves, borrows, supplies, repays,
 //   liquidationCalls, flashLoans, pool, protocol
 // Lending protocol schema (V2): same but uses "deposit" instead of "supply"
-// Rate fields (liquidityRate, variableBorrowRate): RAY units (1e27)
-//   → APY % = rate / 1e27 * 100
+// Rate fields (liquidityRate, variableBorrowRate): RAY units (1e27) APR.
+//   Compounded APY % = ((1 + (rate / 1e27) / 31536000) ^ 31536000 - 1) * 100
+//   The linear rate / 1e27 * 100 figure is APR and runs ~0.1 pp below the Aave UI.
 // Amount fields: native token units → divide by 10^decimals for human-readable
 //
 // Governance schema (governance-v3): proposals, proposalVotes, payloads,

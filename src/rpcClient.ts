@@ -4,13 +4,15 @@
  * Uses `@aave-dao/aave-address-book` as the source of truth for addresses,
  * so view contracts can't drift out of sync with on-chain deployments.
  *
- * RPC URL precedence: per-chain env var → viem's bundled public RPC.
- * Set ETHEREUM_RPC_URL / BASE_RPC_URL / ARBITRUM_RPC_URL / POLYGON_RPC_URL /
- * OPTIMISM_RPC_URL / AVALANCHE_RPC_URL for production reliability.
+ * RPC URL precedence: per-chain env var, then a list of public endpoints
+ * tried in order (viem fallback, no racing). Set ETHEREUM_RPC_URL /
+ * BASE_RPC_URL / ARBITRUM_RPC_URL / POLYGON_RPC_URL / OPTIMISM_RPC_URL /
+ * AVALANCHE_RPC_URL for production reliability — public endpoints rate-limit.
  */
 
 import {
   createPublicClient,
+  fallback,
   http,
   type PublicClient,
   type Chain,
@@ -141,6 +143,90 @@ export const RPC_CHAIN_NAMES = Object.keys(RPC_CHAINS) as [
 
 const _clientCache: Record<string, PublicClient> = {};
 
+/** Public endpoints tried after the optional dedicated URL. Order is the try order. */
+export const PUBLIC_FALLBACKS: Record<string, string[]> = {
+  ethereum: [
+    "https://ethereum.publicnode.com",
+    "https://rpc.ankr.com/eth",
+    "https://cloudflare-eth.com",
+    "https://eth.llamarpc.com",
+  ],
+  base: [
+    "https://base.publicnode.com",
+    "https://mainnet.base.org",
+  ],
+  arbitrum: [
+    "https://arbitrum.publicnode.com",
+    "https://arb1.arbitrum.io/rpc",
+  ],
+  polygon: [
+    "https://polygon.publicnode.com",
+    "https://polygon-rpc.com",
+  ],
+  optimism: [
+    "https://optimism.publicnode.com",
+    "https://mainnet.optimism.io",
+  ],
+  avalanche: [
+    "https://avalanche.publicnode.com",
+    "https://api.avax.network/ext/bc/C/rpc",
+  ],
+};
+
+/** URLs rpcClient will try, dedicated env URL first. */
+export function rpcUrlPlan(chainKey: string): string[] {
+  const cfg = RPC_CHAINS[chainKey];
+  if (!cfg) {
+    throw new Error(
+      `Unsupported RPC chain: ${chainKey}. Supported: ${RPC_CHAIN_NAMES.join(", ")}`
+    );
+  }
+  const envUrl = process.env[cfg.rpcEnvVar];
+  const publics = PUBLIC_FALLBACKS[chainKey] ?? [];
+  const urls = envUrl ? [envUrl, ...publics.filter((url) => url !== envUrl)] : [...publics];
+  return urls;
+}
+
+export function clearRpcClient(chainKey?: string): void {
+  if (chainKey) delete _clientCache[chainKey];
+  else for (const key of Object.keys(_clientCache)) delete _clientCache[key];
+}
+
+export function hasCachedRpcClient(chainKey: string): boolean {
+  return _clientCache[chainKey] != null;
+}
+
+export function rpcBackoffMs(attempt: number): number {
+  const base = Number(process.env.RPC_RETRY_BASE_MS ?? 300);
+  const ms = Number.isFinite(base) && base >= 0 ? base : 300;
+  return ms * 2 ** attempt;
+}
+
+export function isRetryableRpcError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /429|rate limit|timeout|ECONNRESET|503|fetch failed/i.test(msg);
+}
+
+/**
+ * Retry a live read when the endpoint rate-limits or drops the connection.
+ * A retryable failure drops the cached client so the next attempt builds a
+ * fresh fallback chain.
+ */
+export async function withRpcRetry<T>(chainKey: string, fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      last = error;
+      if (!isRetryableRpcError(error) || i === attempts - 1) break;
+      clearRpcClient(chainKey);
+      await new Promise((resolve) => setTimeout(resolve, rpcBackoffMs(i)));
+    }
+  }
+  throw last;
+}
+
 export function rpcClient(chainKey: string): PublicClient {
   if (_clientCache[chainKey]) return _clientCache[chainKey];
   const cfg = RPC_CHAINS[chainKey];
@@ -149,17 +235,24 @@ export function rpcClient(chainKey: string): PublicClient {
       `Unsupported RPC chain: ${chainKey}. Supported: ${RPC_CHAIN_NAMES.join(", ")}`
     );
   }
-  const rpcUrl = process.env[cfg.rpcEnvVar];
-  // Bound the transport. viem's defaults (10s timeout x 3 retries) let a slow
-  // or rate-limited public endpoint stall a tool call past 60s, and a hanging
-  // tool is worse for an agent than a failing one — it burns the caller's
-  // budget with no result and no error to act on. The unconfigured fallback
-  // gets the tighter budget because it is the one that rate-limits.
+  const urls = rpcUrlPlan(chainKey);
+  if (urls.length === 0) {
+    throw new Error(`No RPC URLs configured for ${chainKey}. Set ${cfg.rpcEnvVar}.`);
+  }
+  const dedicated = Boolean(process.env[cfg.rpcEnvVar]);
+  // Bound every hop. viem's defaults (10s x 3) let a rate-limited public
+  // endpoint stall a tool call past 60s. The unconfigured path gets the
+  // tighter budget because that is the one that rate-limits.
+  const transports = urls.map((url) =>
+    http(url, {
+      timeout: dedicated ? 8_000 : 6_000,
+      retryCount: 2,
+      retryDelay: 400,
+    })
+  );
   const client = createPublicClient({
     chain: cfg.viemChain,
-    transport: rpcUrl
-      ? http(rpcUrl, { timeout: 8_000, retryCount: 1 })
-      : http(undefined, { timeout: 6_000, retryCount: 1 }),
+    transport: fallback(transports, { rank: false }),
   }) as PublicClient;
   _clientCache[chainKey] = client;
   return client;
@@ -169,7 +262,7 @@ export function rpcClient(chainKey: string): PublicClient {
 export function rpcHint(chainKey: string): string {
   const cfg = RPC_CHAINS[chainKey];
   return cfg
-    ? ` If this keeps failing or timing out, set ${cfg.rpcEnvVar} to a dedicated RPC endpoint — the unconfigured public fallback is rate-limited.`
+    ? ` Tried ${rpcUrlPlan(chainKey).length} RPC endpoint(s) with backoff. If this keeps failing, set ${cfg.rpcEnvVar} to a dedicated endpoint — public fallbacks are rate-limited.`
     : "";
 }
 

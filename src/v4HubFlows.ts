@@ -1,4 +1,5 @@
 import { queryV4Ethereum } from "./v4Config.js";
+import { V4_DEFAULT_CHAIN_IDS } from "./aaveV4Api.js";
 
 // Aave V4 Omnigraph subgraph client + AaveKit JOIN helper.
 // Returns Hub<->Spoke routing events that AaveKit's GraphQL API doesn't expose,
@@ -65,6 +66,9 @@ async function gqlPost<T>(url: string, query: string, label: string): Promise<T>
 }
 
 // In-process caches so the AaveKit lookups happen once per server run.
+// Omnigraph events are Ethereum hub flows. The name maps still include Base
+// (V4_DEFAULT_CHAIN_IDS) so a spoke or asset address is not silently treated
+// as Ethereum-only if it shows up on a flow.
 let spokeAddressToName: Map<string, string> | null = null;
 let assetAddressToSymbol: Map<string, string> | null = null;
 
@@ -72,7 +76,7 @@ async function loadSpokeRegistry(): Promise<Map<string, string>> {
   if (spokeAddressToName) return spokeAddressToName;
   const data = await gqlPost<{ spokes?: Array<{ name: string; address: string }> }>(
     AAVEKIT_URL,
-    `{ spokes(request: { query: { chainIds: [1] } }) { name address } }`,
+    `{ spokes(request: { query: { chainIds: [${V4_DEFAULT_CHAIN_IDS.join(", ")}] } }) { name address } }`,
     "AaveKit spokes"
   );
   const map = new Map<string, string>();
@@ -91,7 +95,7 @@ async function loadAssetRegistry(): Promise<Map<string, string>> {
     }>;
   }>(
     AAVEKIT_URL,
-    `{ reserves(request: { query: { chainIds: [1] } }) {
+    `{ reserves(request: { query: { chainIds: [${V4_DEFAULT_CHAIN_IDS.join(", ")}] } }) {
         asset { underlying { address info { symbol } } }
       } }`,
     "AaveKit reserves"
