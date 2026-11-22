@@ -11,12 +11,13 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 62 tools across 18 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 63 tools across 18 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
 
 Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, loan swaps, Base equity gap shock, rewards, and protocol history.
 
 ## What's new
 
+- `get_v3_position_risk` prices a V3 position from AaveOracle (Pool, PoolDataProvider, Oracle) so a stale subgraph price cannot inflate the health factor
 - V3 available liquidity is aToken supply minus debt, and reserve answers include `_freshness` (block, timestamp, lag seconds)
 - V3 APYs are compounded to match the Aave UI; `supplyAPR` keeps the linear ray figure
 - V4 hub, reserve, and user reads default to Ethereum and Base
@@ -186,6 +187,20 @@ Real-time liquidation risk monitoring with health factors, risk scores (0–100)
 | Base | 16.2K | 15.2K GRT |
 | Polygon | 13.2K | — |
 | Optimism | 13.0K | — |
+
+---
+
+## Live on-chain tools
+
+3 tools. No Graph API key. `ETHEREUM_RPC_URL`, `BASE_RPC_URL`, `ARBITRUM_RPC_URL`, `POLYGON_RPC_URL`, `OPTIMISM_RPC_URL`, and `AVALANCHE_RPC_URL` are optional. When unset, public RPCs are tried in order; Ethereum starts at `https://ethereum-rpc.publicnode.com`. `get_v3_position_risk` also accepts `rpcUrl` for one call.
+
+| Tool | Description |
+|------|-------------|
+| `get_live_user_account_data` | Current-block health factor, collateral, and debt via `Pool.getUserAccountData` |
+| `get_live_reserve_detail` | One reserve: rates, config, caps, token addresses |
+| `get_v3_position_risk` | Live position risk: per-asset collateral and debt, shock HF, drop to HF 1, per-asset liquidation price, repay or collateral add to a target HF (default 1.8), headroom, and risk flags. Compares oracle prices to the V3 subgraph when `GRAPH_API_KEY` is set and warns above a 2% gap. |
+
+`get_v3_position_risk` is the read to use before quoting liquidation distance. The V3 subgraph's oracle snapshot can lag AaveOracle (on 22 Nov 2026 the Ethereum subgraph still had cbBTC near $104k while the oracle was near $61k). E-mode categories replace LTV and liquidation threshold for assets on the category collateral bitmap. Markets are a config map (Pool, PoolDataProvider, Oracle) for Ethereum, Base, Arbitrum, Polygon, Optimism, and Avalanche.
 
 ---
 

@@ -146,6 +146,7 @@ const _clientCache: Record<string, PublicClient> = {};
 /** Public endpoints tried after the optional dedicated URL. Order is the try order. */
 export const PUBLIC_FALLBACKS: Record<string, string[]> = {
   ethereum: [
+    "https://ethereum-rpc.publicnode.com",
     "https://ethereum.publicnode.com",
     "https://rpc.ankr.com/eth",
     "https://cloudflare-eth.com",
@@ -227,6 +228,24 @@ export async function withRpcRetry<T>(chainKey: string, fn: () => Promise<T>, at
   throw last;
 }
 
+function clientForUrls(chainKey: string, urls: string[], dedicated: boolean): PublicClient {
+  const cfg = RPC_CHAINS[chainKey];
+  // Bound every hop. viem's defaults (10s x 3) let a rate-limited public
+  // endpoint stall a tool call past 60s. The unconfigured path gets the
+  // tighter budget because that is the one that rate-limits.
+  const transports = urls.map((url) =>
+    http(url, {
+      timeout: dedicated ? 8_000 : 6_000,
+      retryCount: 2,
+      retryDelay: 400,
+    })
+  );
+  return createPublicClient({
+    chain: cfg.viemChain,
+    transport: fallback(transports, { rank: false }),
+  }) as PublicClient;
+}
+
 export function rpcClient(chainKey: string): PublicClient {
   if (_clientCache[chainKey]) return _clientCache[chainKey];
   const cfg = RPC_CHAINS[chainKey];
@@ -239,23 +258,26 @@ export function rpcClient(chainKey: string): PublicClient {
   if (urls.length === 0) {
     throw new Error(`No RPC URLs configured for ${chainKey}. Set ${cfg.rpcEnvVar}.`);
   }
-  const dedicated = Boolean(process.env[cfg.rpcEnvVar]);
-  // Bound every hop. viem's defaults (10s x 3) let a rate-limited public
-  // endpoint stall a tool call past 60s. The unconfigured path gets the
-  // tighter budget because that is the one that rate-limits.
-  const transports = urls.map((url) =>
-    http(url, {
-      timeout: dedicated ? 8_000 : 6_000,
-      retryCount: 2,
-      retryDelay: 400,
-    })
-  );
-  const client = createPublicClient({
-    chain: cfg.viemChain,
-    transport: fallback(transports, { rank: false }),
-  }) as PublicClient;
+  const client = clientForUrls(chainKey, urls, Boolean(process.env[cfg.rpcEnvVar]));
   _clientCache[chainKey] = client;
   return client;
+}
+
+/**
+ * Client for one call. `rpcUrl` is tried first and is not cached, so a
+ * caller-supplied endpoint cannot replace the process-wide fallback chain.
+ */
+export function rpcClientFor(chainKey: string, rpcUrl?: string): PublicClient {
+  if (!rpcUrl) return rpcClient(chainKey);
+  const cfg = RPC_CHAINS[chainKey];
+  if (!cfg) {
+    throw new Error(
+      `Unsupported RPC chain: ${chainKey}. Supported: ${RPC_CHAIN_NAMES.join(", ")}`
+    );
+  }
+  const publics = PUBLIC_FALLBACKS[chainKey] ?? [];
+  const urls = [rpcUrl, ...publics.filter((url) => url !== rpcUrl)];
+  return clientForUrls(chainKey, urls, true);
 }
 
 /** Appended to RPC failures so the caller knows the one-line fix. */
