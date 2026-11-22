@@ -45,6 +45,7 @@ import {
   getLiveUserAccountData,
   getLiveReserveDetail,
 } from "./viewContracts.js";
+import { getV3PositionRisk, V3_MARKET_NAMES } from "./v3PositionRisk.js";
 import {
   noteFinding,
   listFindings,
@@ -1991,6 +1992,63 @@ server.registerTool(
   }
 );
 
+// Tool: get_v3_position_risk — live oracle valuation, shocks, and risk flags.
+// Subgraph prices lag AaveOracle; this is the read to use before quoting HF.
+server.registerTool(
+  "get_v3_position_risk",
+  {
+    description:
+      "LIVE Aave V3 position risk priced by AaveOracle at the current block, not by the V3 subgraph. " +
+      "Subgraph oracle snapshots can lag badly (a collateral health factor then looks safer than it is). " +
+      "Reads Pool.getUserAccountData, getReservesList, and e-mode; PoolDataProvider user balances, " +
+      "configuration, caps, aToken supply, total debt, and rates; AaveOracle.getAssetPrice. " +
+      "Returns block timestamp, health factor, collateral and debt USD, current LTV, max LTV, " +
+      "weighted liquidation threshold, per-asset collateral (amount, USD, LTV, liquidation threshold, " +
+      "used-as-collateral, supply APY) and debt (variable/stable, borrow APY). " +
+      "Scenarios: health factor after a joint drop of all non-stable collateral by each shock percent, " +
+      "the joint drop that reaches HF 1, and each collateral asset's price at HF 1 holding the others constant " +
+      "('cannot liquidate alone' when HF stays above 1 at price 0). " +
+      "Also the repay of each debt asset or collateral add needed to reach targetHealthFactor (0 if already above), " +
+      "borrow and withdraw headroom at that target, and risk flags: LTV-0 collateral (counts toward HF, adds no borrow power, " +
+      "blocks withdrawing other collateral), frozen or paused reserves, supply caps over 95% full with remaining headroom, " +
+      "single-asset concentration, and a subgraph-vs-oracle warning above 2% when GRAPH_API_KEY is set. " +
+      "E-mode uses the category LTV and liquidation threshold for assets on the collateral bitmap, and a non-zero category price source. " +
+      "Markets: ethereum, base, arbitrum, polygon, optimism, avalanche — add one by extending the V3 market map " +
+      "(Pool, PoolDataProvider, Oracle). Optional rpcUrl overrides ETHEREUM_RPC_URL / BASE_RPC_URL / ...; " +
+      "otherwise public fallbacks are used (Ethereum starts at https://ethereum-rpc.publicnode.com).",
+    inputSchema: {
+      chain: z.enum(V3_MARKET_NAMES).describe(
+        "V3 market: ethereum, base, arbitrum, polygon, optimism, avalanche"
+      ),
+      userAddress: z.string().describe("Wallet address (0x...)"),
+      shocks: z.array(z.number().min(0).max(100)).default([5, 10, 20, 30, 50]).describe(
+        "Percent drops applied jointly to every non-stable collateral asset. Default [5, 10, 20, 30, 50]."
+      ),
+      targetHealthFactor: z.number().positive().default(1.8).describe(
+        "Health factor to reach by repaying or adding collateral, and the floor for borrow/withdraw headroom. Default 1.8."
+      ),
+      rpcUrl: z.string().url().optional().describe(
+        "Optional JSON-RPC URL for this call. When omitted, the chain's *_RPC_URL env var is used, then public fallbacks."
+      ),
+    },
+  },
+  async ({ chain, userAddress, shocks, targetHealthFactor, rpcUrl }) => {
+    try {
+      return textResult(await getV3PositionRisk({
+        chain,
+        userAddress,
+        shocks,
+        targetHealthFactor,
+        rpcUrl,
+      }));
+    } catch (error) {
+      const e = error instanceof Error ? error : new Error(String(error));
+      e.message = e.message + rpcHint(chain);
+      return errorResult(e);
+    }
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Session state — durable findings store, survives compaction & restart.
 // Stored as JSONL at $GRAPH_AAVE_MCP_STATE_DIR/findings.jsonl
@@ -2115,10 +2173,12 @@ server.registerPrompt(
 2. Identify supplied assets: those with currentATokenBalance > 0 (divide by 10^decimals)
 3. Identify borrowed assets: those with currentTotalDebt > 0 (divide by 10^decimals)
 4. Read _humanReadable.supplyAPY / variableBorrowAPY (compounded). Raw liquidityRate is RAY APR, not the UI APY.
-5. Estimate health factor: sum(collateral_i * priceEth_i * liqThreshold_i / 10000) / sum(debt_i * priceEth_i)
-   (Use priceInEth from each reserve.price — already 18-decimal normalized)
+5. Call get_v3_position_risk(chain="${chain}", userAddress="${address}") for the live health factor,
+   shock distance, and risk flags. Do this whenever ${chain} is ethereum, base, arbitrum, polygon,
+   optimism, or avalanche. Subgraph priceInEth can lag AaveOracle by a wide margin, so do not quote
+   liquidation distance from the subgraph alone. Use the tool's healthFactor, scenarios, and riskFlags.
 6. Call get_recent_borrows(chain="${chain}", userAddress="${address}", first=5) for recent history
-7. Report: total supplied, total borrowed, health factor, collateral assets, liquidation risk level`,
+7. Report: total supplied, total borrowed, live health factor, collateral assets, liquidation risk level`,
         },
       },
     ],
@@ -2555,6 +2615,9 @@ STEP 4 — LIVE confirmation (REQUIRED before reporting any position as critical
    For every position you're about to call "critical" or "liquidatable":
    - Call get_live_user_account_data(chain, userAddress) — this is the
      current-block health factor straight from Pool.getUserAccountData.
+   - When you need shock distance or per-asset liquidation prices, call
+     get_v3_position_risk for that wallet. simulate_health_factor uses subgraph
+     prices, which can be far from AaveOracle.
    - If the live HF disagrees materially with the subgraph HF (e.g. subgraph
      says 0.97 but live says 1.4), TRUST THE LIVE READ and downgrade the
      finding. Note the discrepancy explicitly.
@@ -2563,7 +2626,8 @@ STEP 4 — LIVE confirmation (REQUIRED before reporting any position as critical
 ${userAddress ? `
 STEP 5 — Targeted wallet (${userAddress}):
    For each RPC-supported chain (ethereum, base, arbitrum, polygon, optimism, avalanche):
-   - get_live_user_account_data(chain, "${userAddress}") for current HF
+   - get_v3_position_risk(chain, "${userAddress}") for live HF, shocks, and risk flags
+   - get_live_user_account_data(chain, "${userAddress}") if you only need the headline HF
    - On chains where they have positions, get_user_risk_profile + get_health_factor_history for trend
    - Assess: live HF, trend direction, headroom to liquidation threshold.` : ""}
 

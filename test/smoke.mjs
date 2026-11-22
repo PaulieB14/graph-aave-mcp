@@ -26,7 +26,7 @@ const HAS_KEY = Boolean(process.env.GRAPH_API_KEY);
  * blocked or rate-limited on many networks. Probe once and skip rather than
  * reporting a red suite for something the code cannot control.
  */
-const RPC_TOOLS = new Set(["get_live_user_account_data", "get_live_reserve_detail", "get_oracle_status"]);
+const RPC_TOOLS = new Set(["get_live_user_account_data", "get_live_reserve_detail", "get_v3_position_risk", "get_oracle_status"]);
 async function rpcReachable() {
   const url = process.env.ETHEREUM_RPC_URL;
   try {
@@ -77,6 +77,7 @@ const ARGS = {
   list_risk_chains: {},
   get_live_user_account_data: { chain: CHAIN, userAddress: WHALE },
   get_live_reserve_detail: { chain: CHAIN, assetAddress: USDC },
+  get_v3_position_risk: { chain: CHAIN, userAddress: "0xa6f8509C623e23019f52F8E5d7776Ca05641c359" },
   note_finding: { text: "smoke-test finding" },
   get_session_state: {},
   list_findings: {},
