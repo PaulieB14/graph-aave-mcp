@@ -24,7 +24,7 @@ import {
 import { getAddress, parseAbi, type PublicClient } from "viem";
 import { queryChain } from "./graphClient.js";
 import { rayToAPY, rayToApyNumber } from "./rates.js";
-import { rpcClientFor, RPC_CHAINS, withRpcRetry } from "./rpcClient.js";
+import { rpcClientFor, RPC_CHAINS, rpcHint, withRpcRetry } from "./rpcClient.js";
 import { CHAINS } from "./subgraphs.js";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -35,6 +35,16 @@ export const DEFAULT_TARGET_HF = 1.8;
 export const CONCENTRATION_SHARE = 0.8;
 /** Supply cap utilization above this is flagged, with remaining headroom. */
 export const SUPPLY_CAP_WARN = 0.95;
+/**
+ * Utilization above this is not a usable cap figure. Frozen leftovers and
+ * unit glitches (USDbC on Base has printed tens of millions of percent) stay
+ * out of the flag text.
+ */
+export const SUPPLY_CAP_SANE_MAX = 2;
+/** User supply below this USD is dust and does not get a supply-cap flag. */
+export const DUST_SUPPLY_USD = 1;
+/** User supply below this share of collateral is dust. 0.001 = 0.1%. */
+export const DUST_COLLATERAL_SHARE = 0.001;
 /** Subgraph vs live oracle. Strictly greater than this percent warns. */
 export const SUBGRAPH_DEVIATION_WARN_PCT = 2;
 
@@ -652,19 +662,29 @@ export function positionRiskFlags(args: {
         message: `${market.symbol} is frozen. New supply and new borrows are blocked.`,
       });
     }
-    if (market.supplyCapTokens > 0 && market.suppliedTokens > 0) {
+    // Frozen reserves already say frozen. A cap percent on top of that is how
+    // USDbC on Base printed "13,454,213% full". Dust balances are the same
+    // kind of noise: the user cannot add size there.
+    if (!market.isFrozen && market.supplyCapTokens > 0 && market.suppliedTokens > 0) {
       const used = market.suppliedTokens / market.supplyCapTokens;
-      if (used > SUPPLY_CAP_WARN) {
+      const userUsd = userSupplyUsd(market, args.collateral);
+      const collateralUsd = args.collateral.reduce((sum, leg) => sum + Math.max(0, leg.usd), 0);
+      const dust =
+        userUsd < DUST_SUPPLY_USD ||
+        (collateralUsd > 0 && userUsd / collateralUsd < DUST_COLLATERAL_SHARE);
+      if (Number.isFinite(used) && used > SUPPLY_CAP_WARN && used <= SUPPLY_CAP_SANE_MAX && !dust) {
         const headroom = market.supplyCapTokens - market.suppliedTokens;
-        const headroomUsd = market.priceUsd > 0 ? headroom * market.priceUsd : null;
+        const headroomUsd = headroom > 0 && market.priceUsd > 0 ? headroom * market.priceUsd : null;
+        const headroomText =
+          headroom > 0
+            ? `Headroom remaining: ${round(headroom, 4)} ${market.symbol}` +
+              (headroomUsd == null ? "." : ` (about $${round(headroomUsd, 2).toLocaleString("en-US")}).`)
+            : "No supply-cap headroom remaining.";
         flags.push({
           code: "supply_cap",
           severity: "warning",
           asset: market.symbol,
-          message:
-            `${market.symbol} supply cap is ${(used * 100).toFixed(2)}% full. ` +
-            `Headroom remaining: ${round(headroom, 4)} ${market.symbol}` +
-            (headroomUsd == null ? "." : ` (about $${round(headroomUsd, 2).toLocaleString("en-US")}).`),
+          message: `${market.symbol} supply cap is ${(used * 100).toFixed(2)}% full. ${headroomText}`,
         });
       }
     }
@@ -716,6 +736,78 @@ export function positionRiskFlags(args: {
     }
   }
   return flags;
+}
+
+function userSupplyUsd(market: MarketStatus, collateral: CollateralLeg[]): number {
+  const id = market.id.toLowerCase();
+  const byId = collateral.find((leg) => leg.id.toLowerCase() === id);
+  if (byId) return byId.usd;
+  const bySymbol = collateral.find((leg) => leg.symbol === market.symbol);
+  return bySymbol?.usd ?? 0;
+}
+
+/**
+ * Reject a malformed address before any RPC call. viem's checksum error is
+ * rewritten so callers do not append the "Tried N RPC endpoint(s)" hint.
+ */
+export function parseUserAddress(input: string): `0x${string}` {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (!/^0x[0-9a-fA-F]{40}$/.test(raw)) {
+    throw new Error(`Invalid address: "${input}". Expected a 0x-prefixed 20-byte hex address.`);
+  }
+  try {
+    return getAddress(raw);
+  } catch {
+    throw new Error(`Invalid address: "${input}". Expected a 0x-prefixed 20-byte hex address.`);
+  }
+}
+
+export function positionSummary(args: {
+  chain: string;
+  blockNumber: string;
+  healthFactorText: string;
+  collateral: { amount: string; symbol: string; usd: number }[];
+  debt: { amount: string; symbol: string; usd: number }[];
+  jointDropPct: number | null;
+  jointDropReason: string | null;
+  cannotLiquidateAlone: string[];
+}): string {
+  if (args.collateral.length === 0 && args.debt.length === 0) {
+    return (
+      `No open position on ${args.chain} at block ${args.blockNumber}. ` +
+      `This wallet has no supplies and no debt.`
+    );
+  }
+  const colText =
+    args.collateral
+      .map((row) => `${row.amount} ${row.symbol} ($${row.usd.toLocaleString("en-US")})`)
+      .join(" + ") || "none";
+  const debtText =
+    args.debt
+      .map((row) => `${row.amount} ${row.symbol} ($${row.usd.toLocaleString("en-US")})`)
+      .join(" + ") || "none";
+  const dropText =
+    args.jointDropPct == null
+      ? `Joint non-stable drop to HF 1: ${args.jointDropReason}. `
+      : `Joint non-stable drop to HF 1: ${args.jointDropPct.toFixed(2)}%. `;
+  const aloneText =
+    args.collateral.length === 0
+      ? "No collateral is supplied."
+      : args.cannotLiquidateAlone.length
+        ? `${args.cannotLiquidateAlone.join(", ")} cannot liquidate alone.`
+        : "Every collateral asset can reach HF 1 on its own.";
+  return (
+    `HF ${args.healthFactorText} on ${args.chain} at block ${args.blockNumber}. ` +
+    `Collateral ${colText}. Debt ${debtText}. ${dropText}${aloneText}`
+  );
+}
+
+/** Address errors stay address errors. Other failures still get the RPC hint. */
+export function positionRiskError(chain: string, error: unknown): Error {
+  const e = error instanceof Error ? error : new Error(String(error));
+  if (/invalid address/i.test(e.message)) return e;
+  if (!/RPC endpoint/i.test(e.message)) e.message = e.message + rpcHint(chain);
+  return e;
 }
 
 // ── Chain reads ─────────────────────────────────────────────────────────────
@@ -936,6 +1028,7 @@ export interface PositionRiskInput {
 }
 
 export async function getV3PositionRisk(input: PositionRiskInput) {
+  const user = parseUserAddress(input.userAddress);
   const chain = input.chain.toLowerCase();
   const marketCfg = V3_MARKETS[chain];
   if (!marketCfg) {
@@ -953,7 +1046,6 @@ export async function getV3PositionRisk(input: PositionRiskInput) {
   if (!(targetHealthFactor > 0)) {
     throw new Error("targetHealthFactor must be positive");
   }
-  const user = getAddress(input.userAddress);
   const rpcUrl = input.rpcUrl?.trim() || undefined;
 
   return withRpcRetry(chain, async () => {
@@ -1407,21 +1499,17 @@ export async function getV3PositionRisk(input: PositionRiskInput) {
     const hfText = typeof report.account.healthFactor === "number"
       ? report.account.healthFactor.toFixed(4)
       : report.account.healthFactor;
-    const colText = (report.collateral as { amount: string; symbol: string; usd: number }[])
-      .map((row) => `${row.amount} ${row.symbol} ($${row.usd.toLocaleString("en-US")})`)
-      .join(" + ") || "none";
-    const debtText = (report.debt as { amount: string; symbol: string; usd: number }[])
-      .map((row) => `${row.amount} ${row.symbol} ($${row.usd.toLocaleString("en-US")})`)
-      .join(" + ") || "none";
-    const drop = report.scenarios.jointDropToHealthFactor1.dropPct;
     const alone = perAsset.filter((row) => row.status === "cannot liquidate alone").map((row) => row.symbol);
-    report.summary =
-      `HF ${hfText} on ${chain} at block ${report.asOf.blockNumber}. ` +
-      `Collateral ${colText}. Debt ${debtText}. ` +
-      (drop == null
-        ? `Joint non-stable drop to HF 1: ${report.scenarios.jointDropToHealthFactor1.reason}. `
-        : `Joint non-stable drop to HF 1: ${drop.toFixed(2)}%. `) +
-      (alone.length ? `${alone.join(", ")} cannot liquidate alone.` : "Every collateral asset can reach HF 1 on its own.");
+    report.summary = positionSummary({
+      chain,
+      blockNumber: report.asOf.blockNumber,
+      healthFactorText: hfText,
+      collateral: report.collateral as { amount: string; symbol: string; usd: number }[],
+      debt: report.debt as { amount: string; symbol: string; usd: number }[],
+      jointDropPct: report.scenarios.jointDropToHealthFactor1.dropPct,
+      jointDropReason: report.scenarios.jointDropToHealthFactor1.reason,
+      cannotLiquidateAlone: alone,
+    });
     return report;
   });
 }

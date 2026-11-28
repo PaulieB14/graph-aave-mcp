@@ -78,6 +78,7 @@ const ARGS = {
   get_live_user_account_data: { chain: CHAIN, userAddress: WHALE },
   get_live_reserve_detail: { chain: CHAIN, assetAddress: USDC },
   get_v3_position_risk: { chain: CHAIN, userAddress: "0xa6f8509C623e23019f52F8E5d7776Ca05641c359" },
+  compare_aave_rates: { symbols: ["USDC"], side: "borrow", minLiquidityUsd: 100000 },
   note_finding: { text: "smoke-test finding" },
   get_session_state: {},
   list_findings: {},
@@ -142,6 +143,7 @@ const EXPECT_DATA = new Set([
   "get_v4_protocol_history", "get_v4_hub_flows",
   "get_v4_recent_liquidations", "get_v4_hub_assets", "get_v4_config_changes", "get_v4_hub_daily_flows",
   "get_v4_loan_swaps", "get_v4_loan_swap_stats", "get_oracle_status",
+  "compare_aave_rates",
 ]);
 
 /** Tools that cannot pass right now, with the reason. Keeps the run green

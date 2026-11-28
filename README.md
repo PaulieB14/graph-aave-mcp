@@ -11,12 +11,14 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@PaulieB14/graph-aave-mcp/badge" />
 </a>
 
-**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 63 tools across 18 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
+**MCP server for [AAVE](https://aave.com/) V2, V3, and V4 — 64 tools across 18 Graph subgraphs + the Aave V4 API + V4 Omnigraph (for data the REST API doesn't expose).**
 
 Covers lending markets, user positions, health factors, **cross-chain liquidation risk monitoring**, liquidations, flash loans, governance, V4 hubs/spokes, exchange rates, swap quotes, loan swaps, Base equity gap shock, rewards, and protocol history.
 
 ## What's new
 
+- `compare_aave_rates` reads live borrow and supply APYs from the public Aave V3 API across every mainnet market (Core, Lido, EtherFi, Horizon, Base, and the rest)
+- `get_v3_position_risk` rejects a malformed address before any RPC call, reports an empty wallet as no open position, and drops supply-cap noise on dust, frozen reserves, and broken caps
 - `get_v3_position_risk` prices a V3 position from AaveOracle (Pool, PoolDataProvider, Oracle) so a stale subgraph price cannot inflate the health factor
 - V3 available liquidity is aToken supply minus debt, and reserve answers include `_freshness` (block, timestamp, lag seconds)
 - V3 APYs are compounded to match the Aave UI; `supplyAPR` keeps the linear ray figure
@@ -202,6 +204,20 @@ Real-time liquidation risk monitoring with health factors, risk scores (0–100)
 
 `get_v3_position_risk` is the read to use before quoting liquidation distance. The V3 subgraph's oracle snapshot can lag AaveOracle (on 22 Nov 2026 the Ethereum subgraph still had cbBTC near $104k while the oracle was near $61k). E-mode categories replace LTV and liquidation threshold for assets on the category collateral bitmap. Markets are a config map (Pool, PoolDataProvider, Oracle) for Ethereum, Base, Arbitrum, Polygon, Optimism, and Avalanche.
 
+A malformed address returns an invalid-address error and does not claim that RPC endpoints were tried. A wallet with no supplies and no debt is summarized as no open position. Supply-cap flags are omitted for dust (under $1, or under 0.1% of collateral), for frozen reserves (those only say frozen), and when the cap utilization is not a sane percentage.
+
+---
+
+## Aave V3 rates (public API)
+
+1 tool. No Graph API key and no RPC. Reads [`https://api.v3.aave.com/graphql`](https://api.v3.aave.com/graphql) (override with `AAVE_V3_API_URL`). The call times out after 20s.
+
+| Tool | Description |
+|------|-------------|
+| `compare_aave_rates` | Live borrow and supply APY for a symbol list across every Aave V3 mainnet market, cheapest borrow first. Default symbols are USDC, USDT, USDT0, USDC.e, GHO, DAI, USDS, RLUSD, PYUSD, and USDe. `minLiquidityUsd` and `amountUsd` drop markets that cannot fill the size and warn when the size is more than 20% of available liquidity. Horizon is marked permissioned; EtherFi and Lido are marked restricted-collateral. `excludePermissioned` drops Horizon. |
+
+`find_best_rates` still compares the V2/V3 subgraph deployments and needs `GRAPH_API_KEY`. Use `compare_aave_rates` for the live Aave V3 quote, including Lido, EtherFi, Horizon, and chains the subgraph list does not cover.
+
 ---
 
 ## V4 Tools (Aave API)
@@ -336,6 +352,7 @@ V4 enables cross-chain lending: supply on one spoke, borrow on another. Hubs agg
 
 **V2/V3:**
 - *"What are the top AAVE markets on Ethereum by TVL?"*
+- *"Where is the cheapest USDC borrow on Aave V3 with at least $1M available?"*
 - *"Compare WETH borrow rates across all V3 chains"*
 - *"Analyze the AAVE position for wallet 0x..."*
 - *"If ETH drops 30%, will address 0x... get liquidated?"*
@@ -378,6 +395,7 @@ chain". Every backend call now fails loudly instead.
 | `GRAPH_API_KEY` | all subgraph + Omnigraph tools | [Free key](https://thegraph.com/studio/apikeys/). V4 AaveKit tools work without it. |
 | `ETHEREUM_RPC_URL` (and `BASE_`, `ARBITRUM_`, `POLYGON_`, `OPTIMISM_`, `AVALANCHE_`) | live on-chain tools and `get_oracle_status` | Optional. When unset, several public RPCs are tried in order with backoff. A dedicated URL is still what you want in production. |
 | `AAVE_V4_API_URL` | V4 AaveKit tools | Defaults to `https://api.v4.aave.com/graphql`. |
+| `AAVE_V3_API_URL` | `compare_aave_rates` | Defaults to `https://api.v3.aave.com/graphql`. No key. |
 | `AAVE_V4_ETHEREUM_SUBGRAPH_ID` | V4 Ethereum / Omnigraph tools | Defaults to subgraph `2Gu5HCAnWrNk2pXidscdhNEQhrwLgMKmssuCe9JhZhAe` (queried by subgraph ID, follows republishes). |
 | `AAVE_V4_OMNIGRAPH_DEPLOYMENT_ID` | V4 Ethereum / Omnigraph tools | Optional: pin a specific deployment (IPFS hash) instead of the subgraph ID. |
 | `AAVE_V4_BASE_SUBGRAPH_ID` | V4 subgraph tools (`network: base`) | Defaults to `9x1tg7KX3RXspnK7R1mahAZsM5gTmFhLrmJSbkoBsDdq`. |
