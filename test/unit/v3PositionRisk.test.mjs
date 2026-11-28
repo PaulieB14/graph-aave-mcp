@@ -9,7 +9,13 @@ import {
   formatTokenAmount,
   isStableAsset,
   jointDropToHf1,
+  DUST_COLLATERAL_SHARE,
+  DUST_SUPPLY_USD,
+  SUPPLY_CAP_SANE_MAX,
+  parseUserAddress,
+  positionRiskError,
   positionRiskFlags,
+  positionSummary,
   priceDeviationPct,
   tokenValueUsd,
 } from "../../build/v3PositionRisk.js";
@@ -175,7 +181,7 @@ test("supply cap above 95% reports remaining headroom, and concentration uses 80
       id: "0xcbbtc",
       symbol: "cbBTC",
       isActive: true,
-      isFrozen: true,
+      isFrozen: false,
       isPaused: false,
       supplyCapTokens: 100,
       suppliedTokens: 96,
@@ -188,12 +194,128 @@ test("supply cap above 95% reports remaining headroom, and concentration uses 80
   assert.ok(cap);
   assert.match(cap.message, /96\.00% full/);
   assert.match(cap.message, /Headroom remaining: 4 cbBTC/);
-  const frozen = flags.find((row) => row.code === "frozen_reserve");
-  assert.equal(frozen.asset, "cbBTC");
   const concentration = flags.filter((row) => row.code === "concentration");
   assert.equal(concentration.length, 2);
   assert.ok(concentration.some((row) => row.asset === "cbBTC" && row.severity === "warning"));
   assert.ok(CONCENTRATION_SHARE === 0.8);
+});
+
+test("supply cap flags skip dust, frozen reserves, and absurd percentages", () => {
+  const full = {
+    id: "0xusdbc",
+    symbol: "USDbC",
+    isActive: true,
+    isFrozen: true,
+    isPaused: false,
+    supplyCapTokens: 1,
+    suppliedTokens: 134542.13,
+    priceUsd: 1,
+  };
+  const frozen = positionRiskFlags({
+    collateral: [{ ...weth, id: "0xusdbc", symbol: "USDbC", usd: 50 }],
+    debt: [usdcDebt],
+    markets: [full],
+    healthFactor: 2,
+    healthFactorFromLegs: 2,
+  });
+  assert.equal(frozen.some((row) => row.code === "supply_cap"), false);
+  const frozenFlag = frozen.find((row) => row.code === "frozen_reserve");
+  assert.match(frozenFlag.message, /frozen/i);
+  assert.doesNotMatch(frozenFlag.message, /13454213|13,454,213|% full/);
+
+  const weird = positionRiskFlags({
+    collateral: [{ ...weth, id: "0xusdbc", symbol: "USDbC", usd: 50 }],
+    debt: [usdcDebt],
+    markets: [{ ...full, isFrozen: false }],
+    healthFactor: 2,
+    healthFactorFromLegs: 2,
+  });
+  assert.equal(weird.some((row) => row.code === "supply_cap"), false);
+  assert.ok(SUPPLY_CAP_SANE_MAX === 2);
+  assert.ok(!weird.some((row) => /13454213|13,454,213/.test(row.message)));
+
+  const dust = positionRiskFlags({
+    collateral: [{ ...cbbtc, usd: 0.4 }, { ...weth, usd: 10 }],
+    debt: [usdcDebt],
+    markets: [{
+      id: "0xcbbtc",
+      symbol: "cbBTC",
+      isActive: true,
+      isFrozen: false,
+      isPaused: false,
+      supplyCapTokens: 100,
+      suppliedTokens: 96,
+      priceUsd: 100,
+    }],
+    healthFactor: 2,
+    healthFactorFromLegs: 2,
+  });
+  assert.equal(dust.some((row) => row.code === "supply_cap"), false);
+  assert.equal(DUST_SUPPLY_USD, 1);
+
+  const share = positionRiskFlags({
+    collateral: [{ ...cbbtc, usd: 5 }, { ...weth, usd: 9995 }],
+    debt: [usdcDebt],
+    markets: [{
+      id: "0xcbbtc",
+      symbol: "cbBTC",
+      isActive: true,
+      isFrozen: false,
+      isPaused: false,
+      supplyCapTokens: 100,
+      suppliedTokens: 99,
+      priceUsd: 100,
+    }],
+    healthFactor: 2,
+    healthFactorFromLegs: 2,
+  });
+  assert.equal(share.some((row) => row.code === "supply_cap"), false);
+  assert.equal(DUST_COLLATERAL_SHARE, 0.001);
+});
+
+test("a malformed address is invalid before any RPC hint, and an empty book is no open position", () => {
+  assert.throws(() => parseUserAddress("not-an-address"), /invalid address/i);
+  assert.throws(() => parseUserAddress("0x123"), /invalid address/i);
+  assert.throws(() => parseUserAddress(""), /invalid address/i);
+  const checksummed = parseUserAddress("0xa6f8509c623e23019f52f8e5d7776ca05641c359");
+  assert.equal(checksummed, "0xa6f8509C623e23019f52F8E5d7776Ca05641c359");
+
+  const addressError = positionRiskError(
+    "ethereum",
+    new Error('Invalid address: "nope". Expected a 0x-prefixed 20-byte hex address.')
+  );
+  assert.match(addressError.message, /invalid address/i);
+  assert.doesNotMatch(addressError.message, /RPC endpoint/);
+
+  const rpcError = positionRiskError("ethereum", new Error("HTTP request failed"));
+  assert.match(rpcError.message, /Tried \d+ RPC endpoint/);
+
+  const empty = positionSummary({
+    chain: "base",
+    blockNumber: "1",
+    healthFactorText: "infinity",
+    collateral: [],
+    debt: [],
+    jointDropPct: null,
+    jointDropReason: "no debt",
+    cannotLiquidateAlone: [],
+  });
+  assert.match(empty, /no open position/i);
+  assert.match(empty, /no supplies and no debt/i);
+  assert.doesNotMatch(empty, /Every collateral asset can reach HF 1/);
+
+  const open = positionSummary({
+    chain: "ethereum",
+    blockNumber: "2",
+    healthFactorText: "2.1000",
+    collateral: [{ amount: "1", symbol: "WETH", usd: 100 }],
+    debt: [{ amount: "40", symbol: "USDC", usd: 40 }],
+    jointDropPct: 50,
+    jointDropReason: null,
+    cannotLiquidateAlone: ["WETH"],
+  });
+  assert.match(open, /HF 2.1000/);
+  assert.match(open, /WETH cannot liquidate alone/);
 });
 
 test("subgraph deviation warns only above 2%", () => {

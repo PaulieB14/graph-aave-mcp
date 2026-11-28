@@ -45,7 +45,8 @@ import {
   getLiveUserAccountData,
   getLiveReserveDetail,
 } from "./viewContracts.js";
-import { getV3PositionRisk, V3_MARKET_NAMES } from "./v3PositionRisk.js";
+import { getV3PositionRisk, positionRiskError, V3_MARKET_NAMES } from "./v3PositionRisk.js";
+import { compareAaveRates } from "./compareAaveRates.js";
 import {
   noteFinding,
   listFindings,
@@ -1337,7 +1338,8 @@ server.registerTool(
       "Queries all AAVE lending deployments in parallel for the given asset, then ranks by APY. " +
       "Excludes Fantom (incompatible Messari schema) and skips anomalous pools. " +
       "Returns a ranked table with chain, supply APY, variable borrow APY, utilization, and approx available liquidity. " +
-      "Includes a _recommendation field with the best option.",
+      "Includes a _recommendation field with the best option. " +
+      "For a live quote across every Aave V3 market (Core, Lido, EtherFi, Horizon, and newer chains), use compare_aave_rates — this tool reads subgraph deployments and needs GRAPH_API_KEY.",
     inputSchema: {
       asset: z
         .string()
@@ -2012,6 +2014,10 @@ server.registerTool(
       "borrow and withdraw headroom at that target, and risk flags: LTV-0 collateral (counts toward HF, adds no borrow power, " +
       "blocks withdrawing other collateral), frozen or paused reserves, supply caps over 95% full with remaining headroom, " +
       "single-asset concentration, and a subgraph-vs-oracle warning above 2% when GRAPH_API_KEY is set. " +
+      "Supply-cap flags are skipped for dust (user supply under $1 or under 0.1% of collateral), for frozen reserves " +
+      "(those only say frozen), and when cap utilization is not a sane percentage — never a multi-million percent. " +
+      "A malformed userAddress returns an invalid-address error and does not mention RPC endpoints. " +
+      "A wallet with no supply and no debt is reported as no open position. " +
       "E-mode uses the category LTV and liquidation threshold for assets on the collateral bitmap, and a non-zero category price source. " +
       "Markets: ethereum, base, arbitrum, polygon, optimism, avalanche — add one by extending the V3 market map " +
       "(Pool, PoolDataProvider, Oracle). Optional rpcUrl overrides ETHEREUM_RPC_URL / BASE_RPC_URL / ...; " +
@@ -2042,9 +2048,66 @@ server.registerTool(
         rpcUrl,
       }));
     } catch (error) {
-      const e = error instanceof Error ? error : new Error(String(error));
-      e.message = e.message + rpcHint(chain);
-      return errorResult(e);
+      return errorResult(positionRiskError(chain, error));
+    }
+  }
+);
+
+// Tool: compare_aave_rates — live V3 APYs from the public Aave API, every market.
+server.registerTool(
+  "compare_aave_rates",
+  {
+    description:
+      "Compare live Aave V3 borrow and supply APYs across every mainnet market the public Aave API lists: " +
+      "Ethereum Core, Lido, EtherFi, Horizon, Base, Arbitrum, Optimism, Polygon, Avalanche, BNB, Gnosis, " +
+      "Linea, Plasma, Scroll, zkSync, Sonic, Soneium, and the rest. " +
+      "Reads https://api.v3.aave.com/graphql (override with AAVE_V3_API_URL). No Graph API key and no RPC. " +
+      "Default symbols are USDC, USDT, USDT0, USDC.e, GHO, DAI, USDS, RLUSD, PYUSD, and USDe " +
+      "(USD₮0 matches USDT0; USDC does not match USDC.e). " +
+      "side 'borrow' (default) sorts cheapest borrow APY first. side 'supply' sorts highest supply APY first. " +
+      "Frozen, paused, and non-borrowable reserves are listed after markets you can actually use. " +
+      "Each row has market, chain, APY, available liquidity USD, and borrowing state. " +
+      "minLiquidityUsd drops a market whose available liquidity is below that size, so a $60k borrow does not rank a $6k pool. " +
+      "amountUsd drops markets that cannot fill the size and warns when the size is more than 20% of available liquidity, because the rate would jump. " +
+      "Horizon is flagged permissioned/institutional. EtherFi and Lido are flagged restricted-collateral. " +
+      "excludePermissioned omits Horizon. The call times out instead of hanging when the API is slow.",
+    inputSchema: {
+      symbols: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Symbols to compare. Default: USDC, USDT, USDT0, USDC.e, GHO, DAI, USDS, RLUSD, PYUSD, USDe."
+        ),
+      side: z
+        .enum(["borrow", "supply"])
+        .default("borrow")
+        .describe("'borrow' = cheapest borrow APY first. 'supply' = highest supply APY first. Default borrow."),
+      minLiquidityUsd: z
+        .number()
+        .nonnegative()
+        .optional()
+        .describe("Drop markets with less available liquidity than this many USD."),
+      amountUsd: z
+        .number()
+        .positive()
+        .optional()
+        .describe(
+          "Intended size in USD. Markets with less available liquidity are omitted. " +
+            "Markets where this is more than 20% of available liquidity are kept and warned."
+        ),
+      excludePermissioned: z
+        .boolean()
+        .default(false)
+        .describe("Omit permissioned institutional markets (Horizon). EtherFi and Lido stay, with a collateral note."),
+    },
+  },
+  async ({ symbols, side, minLiquidityUsd, amountUsd, excludePermissioned }) => {
+    try {
+      return textResult(
+        await compareAaveRates({ symbols, side, minLiquidityUsd, amountUsd, excludePermissioned })
+      );
+    } catch (error) {
+      return errorResult(error);
     }
   }
 );
@@ -2222,7 +2285,7 @@ server.registerPrompt(
   "compare_aave_rates",
   {
     description:
-      "Compare supply APY and borrow APY for a specific asset across all supported AAVE chains",
+      "Compare live supply APY and borrow APY for one asset across every Aave V3 market via compare_aave_rates",
     argsSchema: {
       symbol: z
         .string()
@@ -2235,13 +2298,13 @@ server.registerPrompt(
         role: "user" as const,
         content: {
           type: "text" as const,
-          text: `Compare AAVE ${symbol.toUpperCase()} rates across all chains. Steps:
-1. Call list_aave_chains to see all V3 chains (focus on ethereum, base, arbitrum, polygon, optimism, avalanche first)
-2. For each chain, call get_aave_reserve(chain=X, symbol="${symbol.toUpperCase()}")
-3. Read _humanReadable.supplyAPY and variableBorrowAPY (compounded). availableLiquidity there is aToken minus debt.
-4. Also collect: totalLiquidity, availableLiquidity, utilizationRate for each chain
-5. Build a comparison table: Chain | Supply APY | Variable Borrow APY | TVL | Utilization %
-6. Highlight: best chain to supply ${symbol}, cheapest chain to borrow ${symbol}, and why rates differ`,
+          text: `Compare live Aave V3 ${symbol.toUpperCase()} rates across every mainnet market. Steps:
+1. Call compare_aave_rates(symbols: ["${symbol.toUpperCase()}"], side: "borrow") for the cheapest borrow, and side: "supply" for the best supply APY.
+2. Read market, chain, apy, availableLiquidityUsd, and borrowingState. Borrow results are cheapest first. Frozen, paused, and disabled borrows are listed after markets you can use.
+3. If the user has a size in mind, pass amountUsd so a market that cannot fill it is dropped, and heed warnings when the size is more than 20% of available liquidity (the rate would jump). minLiquidityUsd is the same idea without naming a trade size.
+4. Horizon is permissioned/institutional. EtherFi and Lido restrict collateral. Do not recommend them as Ethereum Core.
+5. find_best_rates is the subgraph comparison and needs GRAPH_API_KEY. Use it only when you need that subgraph view. For history on the market you picked, call get_reserve_rate_history.
+6. Highlight: cheapest market to borrow ${symbol}, best market to supply ${symbol}, liquidity, and any permission or collateral restriction.`,
         },
       },
     ],
